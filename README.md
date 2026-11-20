@@ -56,6 +56,7 @@ Settings contains the original command operations: system messages, log visibili
 | `/hcd move` | Show/hide movable-toast preview |
 | `/hcd log` | Toggle death log |
 | `/hcd log scale number` | Set log scale |
+| `/hcd log minlevel number` | Set minimum recorded death level (1–60, default 10) |
 | `/hcd toast` | Toggle death toasts |
 | `/hcd toast scale number` | Set toast scale |
 | `/hcd toast time seconds` | Set toast duration |
@@ -67,6 +68,18 @@ Settings contains the original command operations: system messages, log visibili
 | `/hcd reset` | Reset settings and positions; preserve deaths |
 
 `/hcdeaths` is an alias for `/hcd`.
+
+## Minimum recorded death level
+
+The default minimum level is **10** (inclusive). Change **Minimum recorded level** in Settings and press Apply, or use `/hcd log minlevel 20`. Valid values are whole numbers **1–60**; use **1** to record all normal player death levels.
+
+The threshold is captured when a new death notice arrives and applies when saving that PvE/PvP death. Existing saved logs are not hidden or deleted when the threshold changes. System messages, death toasts, sounds, and level-progress notifications continue following their own settings; this option controls log storage only. Reset restores the minimum to **10**.
+
+## Death locations
+
+For current messages such as `Hardcore character Witch (level 32) has fallen to Torn Fin Tidehunter (level 32) in Western Strand`, the announced place is stored in a separate `location` field and shown in the log, tooltip, and toast. The broad `/who` zone remains in `zone` and is shown separately in the tooltip when different. Older entries without a saved location continue showing their zone; historical precise locations cannot be reconstructed from zone-only records.
+
+The current PvE message format above was supplied as a real example. Equivalent natural-cause and PvP formats are supported by parser tests but have not been verified against live messages. Legacy messages remain supported.
 
 ## Timestamps
 

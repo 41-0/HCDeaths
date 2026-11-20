@@ -2,6 +2,21 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.0.3-fork — 2026-11-20
+
+- Add a minimum recorded death level, default **10**, editable in Settings or `/hcd log minlevel N` (whole numbers 1–60).
+- Apply the threshold captured when a death notice arrives; preserve previously saved entries.
+- Keep toast and system-message settings independent of the recording threshold.
+- Reset restores the minimum to 10. Level 1 allows all normal player death levels.
+
+## 1.0.2-fork — 2026-11-20
+
+- Parse current death notices with `Name (level N) has fallen to Enemy (level N) in Place`.
+- Save the announced place separately from the broad zone returned by `/who`.
+- Show the precise place in log rows, details, and toasts; retain the broad zone in details.
+- Retain victim levels from death notices instead of replacing them with later `/who` levels.
+- Keep legacy death-message parsing and zone-only log compatibility.
+
 ## 1.0.1-fork — 2026-11-20
 
 - Show the saved UTC date and time in every log row and its detail tooltip.
@@ -29,10 +44,3 @@ These notes cover changes made by this fork, not releases by GryllsAddons.
 - Unsupported-client message no longer calls an addon object before it exists.
 
 ### Preserved
-
-- Original author's copyright and MIT License, unchanged.
-- Original bundled media, saved-variable names, death parsing, and toast functionality.
-
-### Validation
-
-- Mocked API/frame regression tests passed; actual Turtle WoW client testing remains outstanding.

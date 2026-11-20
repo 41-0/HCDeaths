@@ -12,6 +12,7 @@ end
 HCDeaths_Settings = {
 	message = true,
 	log = false,
+    minlevel = 10,
 	toast = true,
 	color = false,
 	deathsound = true,
@@ -467,9 +468,9 @@ function HCDeath:Toast()
 						HCDeath.death:SetText("")
 						HCDeath.location:SetText("Has begun the Inferno Challenge!")
 					else
-						-- local locHex = HCDeath:locHex(hcdeath.zone)		
+						-- local locHex = HCDeath:locHex(HCDeath:DeathLocation(hcdeath))		
 						-- HCDeath.location:SetText("Has died in ".."|cff"..locHex..hcdeath.zone)
-						HCDeath.location:SetText("Has died in "..hcdeath.zone)
+						HCDeath.location:SetText("Has died in "..HCDeath:DeathLocation(hcdeath))
 						HCDeath.name:SetText("|cff"..hex..hcdeath.playerName)
 						if hcdeath.deathType == "PVE" then
 							if hcdeath.killerLevel then
@@ -579,10 +580,61 @@ function HCDeath:GetWhoInfo(player)
 	end
 end
 
+-- Death-message location is distinct from the broad /who zone.
+function HCDeath:DeathLocation(record)
+    if record and type(record.location) == "string" and record.location ~= "" then
+        return record.location
+    end
+    return record and record.zone or "Unknown location"
+end
+
+-- Current Turtle death notices put the victim's level before "has fallen".
+-- Keep the legacy parser below for older notices without this format.
+function HCDeath:ParseDeathMessage(message)
+    if type(message) ~= "string" then return nil end
+    local clean = string.gsub(message, "|c%x%x%x%x%x%x%x%x", "")
+    clean = string.gsub(clean, "|r", "")
+    clean = string.gsub(clean, "|H.-|h(.-)|h", "%1")
+    clean = string.gsub(clean, "%.%s+May this sacrifice not be forgotten%.?%s*$", "")
+    local _, _, name, level, body = string.find(clean,
+        "Hardcore character ([^%s%(]+)%s*%(level%s+(%d+)%)%s+(.+)$")
+    if not name then return nil end
+    name = string.gsub(name, "^%[(.-)%]$", "%1")
+    local _, _, killer, killerLevel, location = string.find(body,
+        "^has fallen to (.-)%s+%(level%s+([^%)]+)%)%s+in%s+(.+)$")
+    if killer then
+        return {playerName=name, playerLevel=level, killerName=killer,
+            killerLevel=killerLevel, killerClass="NPC", deathType="PVE", location=location}
+    end
+    local _, _, naturalLocation = string.find(body, "^died of natural causes%s+in%s+(.+)$")
+    if naturalLocation then
+        return {playerName=name, playerLevel=level, killerName="Natural Causes",
+            killerClass="ENV", deathType="PVE", location=naturalLocation}
+    end
+    local _, _, playerKiller, pvpLocation = string.find(body,
+        "^has fallen in PvP to ([^%s]+)%s+in%s+(.+)$")
+    if playerKiller then
+        return {playerName=name, playerLevel=level, killerName=playerKiller,
+            deathType="PVP", location=pvpLocation}
+    end
+    return nil
+end
+
+-- Apply the reception-time threshold only to newly saved death records.
+function HCDeath:ShouldRecordDeath(record)
+    if record.deathType ~= "PVE" and record.deathType ~= "PVP" then return true end
+    local minimum = tonumber(record.recordMinLevel) or tonumber(HCDeaths_Settings.minlevel) or 10
+    local level = tonumber(record.playerLevel)
+    return level ~= nil and level >= minimum
+end
+
 function HCDeath:QueryPlayer()
 	for _, hcdeath in pairs(deaths) do
 		if not hcdeath.playerClass then
-			hcdeath.playerGuild, hcdeath.playerLevel, hcdeath.playerRace, hcdeath.playerClass, hcdeath.zone = HCDeath:GetWhoInfo(hcdeath.playerName)
+			local guild, level, race, class, zone = HCDeath:GetWhoInfo(hcdeath.playerName)
+            hcdeath.playerGuild = guild
+            hcdeath.playerLevel = hcdeath.playerLevel or level
+            hcdeath.playerRace, hcdeath.playerClass, hcdeath.zone = race, class, zone
 			if (hcdeath.deathType ~= "PVP") and hcdeath.playerClass then
 				hcdeath.info = true
 			elseif (hcdeath.deathType == "PVP") and (not hcdeath.killerClass) then
@@ -610,13 +662,14 @@ function HCDeath:QueryPlayer()
 
 			hcdeath.lastWords = tostring(HCDeaths_LastWords[hcdeath.playerName])
 
-			if not match then
+			if not match and HCDeath:ShouldRecordDeath(hcdeath) then
 				table.insert(HCDeaths, {
 					sdate = hcdeath.sdate,
 					stime = hcdeath.stime,
 					deathType = hcdeath.deathType,
 					hcType = hcdeath.hcType,
 					zone = hcdeath.zone,
+                    location = hcdeath.location,
 					lastWords = hcdeath.lastWords,
 					playerName = hcdeath.playerName,
 					playerLevel = hcdeath.playerLevel,
@@ -730,7 +783,9 @@ function ChatFrame_OnEvent(event)
 
 		local _, _, hcprogress = string.find(arg1, "(%a+) has reached level (%d%d) in Hardcore mode")
 		local _, _, hcimmortal = string.find(arg1, "(%a+) has transcended death and reached level 60")
-		local _, _, hcdeath = string.find(arg1,"A tragedy has occurred. Hardcore character (%a+)")
+		local parsedDeath = HCDeath:ParseDeathMessage(arg1)
+        local _, _, hcdeath = string.find(arg1,"A tragedy has occur+ed%. Hardcore character (%a+)")
+        if parsedDeath then hcdeath = parsedDeath.playerName end
 		local _, _, infstart = string.find(arg1,"(%a+) has begun the Inferno Challenge")
 		-- local _, _, infdeath = string.find(arg1,"A tragedy has occurred. Inferno character (%a+)")
 
@@ -808,12 +863,27 @@ function ChatFrame_OnEvent(event)
 				end
 			end
 
+            local deathLocation
+            if parsedDeath then
+                playerLevel = parsedDeath.playerLevel
+                deathType = parsedDeath.deathType
+                killerName, killerLevel, killerClass = parsedDeath.killerName, parsedDeath.killerLevel, parsedDeath.killerClass
+                deathLocation = parsedDeath.location
+            else
+                -- Legacy notices may also append a location after "at level N".
+                local _, _, place = string.find(arg1,
+                    "at level %d+ in (.-)%.%s+May this sacrifice not be forgotten")
+                deathLocation = place
+            end
+
 			table.insert(deaths, {
 				sdate = date("!%Y/%m/%d"),
 				stime = date("!%H:%M:%S"),
 				deathType = deathType,
 				hcType = hcType,
+                recordMinLevel = HCDeaths_Settings.minlevel or 10,
 				zone = nil,
+                location = deathLocation,
 				playerName = hcdeath,
 				playerLevel = playerLevel,
 				playerClass = nil,
@@ -868,6 +938,7 @@ end
 function HCDeath:reset()
 	HCDeaths_Settings.message = true
 	HCDeaths_Settings.log = false
+    HCDeaths_Settings.minlevel = 10
 	HCDeaths_Settings.toast = true
 	HCDeaths_Settings.color = false
 	HCDeaths_Settings.deathsound = true
@@ -920,7 +991,14 @@ local function HCDeaths_commands(msg, editbox)
     else
         local _, _, area, option, value = string.find(msg, "^(%a+)%s+(%a+)%s+(%S+)$")
         local num = tonumber(value)
-        if (area == "toast" and (option == "scale" or option == "time"))
+        if area == "log" and option == "minlevel" then
+            if not num or num < 1 or num > 60 or num ~= math.floor(num) then
+                HCDeath:print("Minimum recorded level must be an integer from 1 to 60.")
+            else
+                HCDeaths_Settings.minlevel = num
+                HCDeath:print("Minimum recorded death level set to "..num.." (existing logs retained)")
+            end
+        elseif (area == "toast" and (option == "scale" or option == "time"))
             or (area == "log" and option == "scale") then
             if not num or num ~= num or num <= 0 or num == math.huge
                 or (option == "scale" and (num < 0.25 or num > 3))
@@ -936,7 +1014,7 @@ local function HCDeaths_commands(msg, editbox)
         else
             HCDeath:print("/hcd - settings GUI; /hcd help - commands")
             HCDeath:print("/hcd message | move | log | toast | progress | color | deathsound | levelsound | roar | reset")
-            HCDeath:print("/hcd log scale number | toast scale number | toast time seconds")
+            HCDeath:print("/hcd log scale number | log minlevel 1-60 | toast scale number | toast time seconds")
         end
     end
     if HCDeath.RefreshGUI then HCDeath:RefreshGUI() end
@@ -1044,8 +1122,8 @@ do
 					pguild = " |cff"..guildhex.."<"..hcdeath.playerGuild..">|r"
 				end
 
-				local locHex = HCDeath:locHex(hcdeath.zone)	
-				local zone = "|cff"..locHex..hcdeath.zone.."|r"
+				local locHex = HCDeath:locHex(HCDeath:DeathLocation(hcdeath))	
+				local zone = "|cff"..locHex..HCDeath:DeathLocation(hcdeath).."|r"
 
 				local lastwords = ""
 				if hcdeath.lastWords ~= "nil" then
@@ -1080,7 +1158,10 @@ do
 				GameTooltip:ClearLines()
 				GameTooltip:AddLine(death.type, death.r, death.g, death.b)
 				GameTooltip:AddLine(pname..pguild..NORMAL_FONT_COLOR_CODE.." the level "..hcdeath.playerLevel.." "..hcdeath.playerRace.." |r"..pclass..NORMAL_FONT_COLOR_CODE.." died in |r"..zone..NORMAL_FONT_COLOR_CODE.." to |r"..killer..NORMAL_FONT_COLOR_CODE..". |r"..lastwords,_,_,_,true)
-				GameTooltip:AddLine("Recorded (UTC): "..HCDeath:LogTimestamp(hcdeath),0.7,0.7,0.7)
+				if hcdeath.location and hcdeath.zone and hcdeath.zone ~= hcdeath.location then
+                    GameTooltip:AddLine("Zone (/who): "..hcdeath.zone,0.7,0.7,0.7)
+                end
+                GameTooltip:AddLine("Recorded (UTC): "..HCDeath:LogTimestamp(hcdeath),0.7,0.7,0.7)
 				GameTooltip:Show()
 			end)
         log.rows[i]=row;row:Hide()
@@ -1125,8 +1206,8 @@ function HCDeath:updateLog()
             local c=RAID_CLASS_COLORS[strupper(record.playerClass)] or {r=.5,g=.5,b=.5}
             row.timestamp:SetText(HCDeath:LogTimestamp(record))
             row.text:SetText(tostring(record.playerLevel).."  |cff"..HCDeath:rgbToHex(c.r,c.g,c.b)
-                ..record.playerName.."|r  "..tostring(record.zone or ""))
-            row.kind:SetTexture(HCDeath:locTex(record.deathType,record.hcType,record.zone))
+                ..record.playerName.."|r  "..HCDeath:DeathLocation(record))
+            row.kind:SetTexture(HCDeath:locTex(record.deathType,record.hcType,HCDeath:DeathLocation(record)))
             row.race:SetTexture(media.."Log\\"..record.playerRace)
             row.class:SetTexture(media.."Log\\"..record.playerClass)
             row:Show()
@@ -1150,7 +1231,7 @@ HCDeath:SetScript("OnEvent", function()
 		SLASH_HCDEATHS2 = "/hcd"
 		SlashCmdList["HCDEATHS"] = HCDeaths_commands
         HCDeaths_Settings = HCDeaths_Settings or {}
-        local defaults = {message=true, log=false, toast=true, color=false, deathsound=true,
+        local defaults = {message=true, log=false, minlevel=10, toast=true, color=false, deathsound=true,
             levelsound=true, roar=false, toastscale=1, logscale=1, toasttime=10, progress=true}
         for key, value in pairs(defaults) do
             if HCDeaths_Settings[key] == nil then HCDeaths_Settings[key] = value end
