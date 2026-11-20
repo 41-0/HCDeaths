@@ -3,11 +3,7 @@
 -- Unofficial fork modifications: settings GUI and paged log (2026-11-20).
 -- This modified version is not an official release by the original author.
 
-local turtle = (TargetHPText or TargetHPPercText)
-if not turtle then
-		DEFAULT_CHAT_FRAME:AddMessage("HCDeaths: This addon will only function correctly for Turtle WoW.")
-    return
-end
+-- Octo WoW is the primary target. Other compatible 1.12 servers are unverified.
 
 HCDeaths_Settings = {
 	message = true,
@@ -588,7 +584,7 @@ function HCDeath:DeathLocation(record)
     return record and record.zone or "Unknown location"
 end
 
--- Current Turtle death notices put the victim's level before "has fallen".
+-- Current Octo death notices put the victim's level before "has fallen".
 -- Keep the legacy parser below for older notices without this format.
 function HCDeath:ParseDeathMessage(message)
     if type(message) ~= "string" then return nil end
@@ -617,6 +613,37 @@ function HCDeath:ParseDeathMessage(message)
         return {playerName=name, playerLevel=level, killerName=playerKiller,
             deathType="PVP", location=pvpLocation}
     end
+    return nil
+end
+
+-- Octo milestone notices include class and optionally a multi-word guild name.
+function HCDeath:ParseLevelMessage(message)
+    if type(message) ~= "string" then return nil end
+    local clean = string.gsub(message, "|c%x%x%x%x%x%x%x%x", "")
+    clean = string.gsub(clean, "|r", "")
+    clean = string.gsub(clean, "|H.-|h(.-)|h", "%1")
+    local _, _, class, name, guild, level = string.find(clean,
+        "(%a+) ([^%s]+) of guild (.-) has reached level (%d+)%.")
+    if not name then
+        _, _, class, name, level = string.find(clean,
+            "(%a+) ([^%s]+) has reached level (%d+)%.")
+    end
+    if name then
+        local classes = {warrior="Warrior", paladin="Paladin", hunter="Hunter",
+            rogue="Rogue", priest="Priest", shaman="Shaman", mage="Mage",
+            warlock="Warlock", druid="Druid"}
+        class = classes[string.lower(class)]
+        local number = tonumber(level)
+        if class and number and number >= 1 and number <= 60 then
+            name = string.gsub(name, "^%[(.-)%]$", "%1")
+            return {playerName=name, playerLevel=level, playerClass=class, playerGuild=guild}
+        end
+    end
+    -- Legacy Turtle-style milestone and level-60 messages remain supported.
+    _, _, name, level = string.find(clean, "([^%s]+) has reached level (%d+) in Hardcore mode")
+    if name then return {playerName=name, playerLevel=level} end
+    _, _, name = string.find(clean, "([^%s]+) has transcended death and reached level 60")
+    if name then return {playerName=name, playerLevel="60"} end
     return nil
 end
 
@@ -781,19 +808,18 @@ function ChatFrame_OnEvent(event)
 		-- [PLAYERNAME]: Level PLAYERLEVEL PLAYERRACE PLAYERCLASS <PLAYERGUILD> - AREA
 		-- 1 player Total
 
-		local _, _, hcprogress = string.find(arg1, "(%a+) has reached level (%d%d) in Hardcore mode")
-		local _, _, hcimmortal = string.find(arg1, "(%a+) has transcended death and reached level 60")
+        local parsedLevel = HCDeath:ParseLevelMessage(arg1)
 		local parsedDeath = HCDeath:ParseDeathMessage(arg1)
         local _, _, hcdeath = string.find(arg1,"A tragedy has occur+ed%. Hardcore character (%a+)")
         if parsedDeath then hcdeath = parsedDeath.playerName end
 		local _, _, infstart = string.find(arg1,"(%a+) has begun the Inferno Challenge")
 		-- local _, _, infdeath = string.find(arg1,"A tragedy has occurred. Inferno character (%a+)")
 
-		if hcprogress or hcimmortal then
+		if parsedLevel then
 			HCDeath:systemMessage(arg1)
 			
-			local _, _, playerName = string.find(arg1,"(%a+) has")
-			local _, _, playerLevel = string.find(arg1,"reached level (%d+)")
+            local playerName = parsedLevel.playerName
+            local playerLevel = parsedLevel.playerLevel
 
 			table.insert(deaths, {
 				sdate = date("!%Y/%m/%d"),

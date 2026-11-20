@@ -1,8 +1,8 @@
 # HCDeaths — Unofficial GUI Fork
 
-An unofficial, MIT-licensed fork of **HCDeaths**, originally created by **Grylls / GryllsAddons** for Turtle WoW. This fork adds a settings GUI, a minimap launcher, and a paged death log.
+An unofficial, MIT-licensed fork of **HCDeaths**, originally created by **Grylls / GryllsAddons** for Turtle WoW. **This fork primarily targets Octo WoW.** It adds a settings GUI, a minimap launcher, a paged death log, and support for Octo WoW announcement formats. Other compatible 1.12 servers may work, but are not verified.
 
-This is an independently modified version, not an official GryllsAddons release. The original author is credited for the original addon; changes and support for this fork are separate. No endorsement by GryllsAddons, Turtle WoW, or Blizzard Entertainment is implied.
+This is an independently modified version, not an official GryllsAddons release. The original author is credited for the original addon; changes and support for this fork are separate. No endorsement by GryllsAddons, Octo WoW, Turtle WoW, or Blizzard Entertainment is implied.
 
 ## Credits and source history
 
@@ -27,7 +27,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the fork's release notes.
 
 ## Requirements and installation
 
-- Turtle WoW's 1.12 client; addon code uses Lua 5.0-compatible syntax and APIs.
+- **Octo WoW / WoW 1.12** is the primary target; addon code uses Lua 5.0-compatible syntax and APIs.
+- Other 1.12 servers may work if their announcements and APIs are compatible; compatibility is not guaranteed. The addon does not reject a client simply because Turtle-specific target-frame globals are absent.
 - No additional addon libraries are required.
 - Extract the **HCDeaths** folder into `Interface/AddOns/`.
 - The resulting path must be `Interface/AddOns/HCDeaths/HCDeaths.toc`. If downloaded from GitHub, rename the repository's extracted folder to **HCDeaths** when necessary.
@@ -75,6 +76,12 @@ The default minimum level is **10** (inclusive). Change **Minimum recorded level
 
 The threshold is captured when a new death notice arrives and applies when saving that PvE/PvP death. Existing saved logs are not hidden or deleted when the threshold changes. System messages, death toasts, sounds, and level-progress notifications continue following their own settings; this option controls log storage only. Reset restores the minimum to **10**.
 
+## Level-up toasts
+
+The parser supports Octo announcements such as `Rogue Notogii of guild Hell Fire has reached level 20. As they ascend towards immortality, their glory grows! However, so too does the danger they face.` It extracts the player's name and reached level correctly even when a guild name contains spaces. The equivalent format without a guild, and the original Turtle-style announcements, are also supported.
+
+Enable **Death toast popups** and **Level progress toasts** for milestone toasts. **Level-up sounds** controls their sound separately. Player race/class enrichment still uses the original `/who` flow, so a successful player lookup is required. The minimum death-log recording level does not filter milestone toasts.
+
 ## Death locations
 
 For current messages such as `Hardcore character Witch (level 32) has fallen to Torn Fin Tidehunter (level 32) in Western Strand`, the announced place is stored in a separate `location` field and shown in the log, tooltip, and toast. The broad `/who` zone remains in `zone` and is shown separately in the tooltip when different. Older entries without a saved location continue showing their zone; historical precise locations cannot be reconstructed from zone-only records.
@@ -97,7 +104,7 @@ The page browser covers all recorded PvE/PvP deaths. It cannot recover events th
 
 ## Testing and reporting issues
 
-The fork has passed mocked frame/API tests covering startup, default visibility, settings, minimap clicks, more than 100 log entries, pagination, tooltips, reset behavior, and retained visibility. Actual Turtle WoW client behavior and visual layout have not yet been verified.
+The fork has passed mocked frame/API tests covering startup, default visibility, settings, minimap clicks, more than 100 log entries, pagination, tooltips, reset behavior, and retained visibility. Actual Octo WoW client behavior and visual layout have not yet been verified. Other server environments are unverified as well.
 
 Please report issues to this fork's repository, rather than asking the original author to support these changes. Include client version, the error text, and reproduction steps. Do not attach account data or personal chat logs unnecessarily.
 

@@ -2,6 +2,19 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.0.5-fork — 2026-11-20
+
+- Fix numeric field rendering with explicit opaque black backgrounds and borders.
+- Use template-independent edit boxes with explicit fonts, padding, and dimensions for log scale, toast scale, toast duration, and minimum recorded level.
+- Preserve existing input validation and Apply/Enter behavior.
+
+## 1.0.4-fork — 2026-11-20
+
+- Fix level-up announcement parsing for Octo's `Class Name of guild Guild Name has reached level N.` format, including multi-word guild names.
+- Support the equivalent no-guild format and retain legacy milestones; correctly assign level 60 to legacy immortality notices.
+- Identify Octo WoW as the fork's primary target in README, addon metadata, and settings title; describe other servers as unverified.
+- Remove the startup gate based on Turtle-specific target-frame globals, which are not required by the addon.
+
 ## 1.0.3-fork — 2026-11-20
 
 - Add a minimum recorded death level, default **10**, editable in Settings or `/hcd log minlevel N` (whole numbers 1–60).
@@ -44,3 +57,10 @@ These notes cover changes made by this fork, not releases by GryllsAddons.
 - Unsupported-client message no longer calls an addon object before it exists.
 
 ### Preserved
+
+- Original author's copyright and MIT License, unchanged.
+- Original bundled media, saved-variable names, death parsing, and toast functionality.
+
+### Validation
+
+- Mocked API/frame regression tests passed; actual Turtle WoW client testing remains outstanding.

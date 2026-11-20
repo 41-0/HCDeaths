@@ -16,7 +16,7 @@ window:SetBackdrop({bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
     insets={left=4,right=4,top=4,bottom=4}})
 window:SetBackdropColor(0.04,0.04,0.04,0.97)
 local title=window:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
-title:SetPoint("TOP",window,"TOP",0,-17);title:SetText("HCDeaths Settings")
+title:SetPoint("TOP",window,"TOP",0,-17);title:SetText("HCDeaths Settings - Octo WoW")
 local close=CreateFrame("Button",nil,window,"UIPanelCloseButton")
 close:SetPoint("TOPRIGHT",window,"TOPRIGHT",0,0)
 local controls={}
@@ -50,8 +50,20 @@ local function button(text,x,y,width,callback)
 end
 local function numeric(key,text,command,y)
     label(text,26,y-5,"GameFontNormal")
-    local e=CreateFrame("EditBox",nil,window,"InputBoxTemplate")
-    e:SetWidth(82);e:SetHeight(24);e:SetPoint("TOPLEFT",window,"TOPLEFT",270,y)
+    -- Separate backdrop keeps all fields consistent on the 1.12 client,
+    -- independently of InputBoxTemplate textures and UI replacements.
+    local box=CreateFrame("Frame","HCDeathsNumeric_"..key,window)
+    box:SetWidth(82);box:SetHeight(24)
+    box:SetPoint("TOPLEFT",window,"TOPLEFT",270,y)
+    box:SetBackdrop({bgFile="Interface\\Buttons\\White8x8",
+        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",tile=true,tileSize=8,
+        edgeSize=12,insets={left=3,right=3,top=3,bottom=3}})
+    box:SetBackdropColor(0,0,0,1)
+    box:SetBackdropBorderColor(0.65,0.65,0.65,1)
+    local e=CreateFrame("EditBox","HCDeathsNumericInput_"..key,box)
+    e:SetWidth(66);e:SetHeight(20);e:SetPoint("CENTER",box,"CENTER",0,0)
+    e:SetFontObject("GameFontHighlightSmall");e:SetTextColor(1,1,1)
+    e:SetJustifyH("LEFT");e:SetTextInsets(0,0,0,0)
     e:SetAutoFocus(false);e:SetMaxLetters(12)
     e:SetScript("OnEscapePressed",function() this:ClearFocus();addon:RefreshGUI() end)
     local function apply()
