@@ -1,0 +1,12 @@
+## Interface: 11200
+## Title: HCDeaths (Unofficial GUI Fork)
+## Author: Grylls (GryllsAddons), original author
+## Notes: Unofficial fork: settings GUI, minimap launcher, and paged death log. Not an official GryllsAddons release.
+## Version: 1.0.1-fork
+## X-License: MIT
+## X-Original-Author: Grylls / GryllsAddons
+## X-Original-Repository: https://github.com/GryllsAddons/HCDeaths
+## SavedVariables: HCDeaths_Settings, HCDeaths, HCDeaths_LastWords
+
+HCDeaths.lua
+HCDeathsGUI.lua
