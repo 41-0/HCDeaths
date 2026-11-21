@@ -73,6 +73,8 @@ Settings contains the original command operations: system messages, log visibili
 | `/hcd deathsound` | Toggle death sounds |
 | `/hcd levelsound` | Toggle level-progress sounds |
 | `/hcd roar` | Toggle death roars instead of the raid alert |
+| `/hcd sync check` | Request discovery now and print transport diagnostics |
+| `/hcd sync status` | Print the latest live synchronization counters/status |
 | `/hcd sync` | Toggle automatic log sharing (default on) |
 | `/hcd reset` | Reset settings and positions; preserve deaths |
 
@@ -123,7 +125,7 @@ Sharing is enabled by default. No player-name entry, grouping, or manual sync co
 
 - Discovery repeats approximately every 5–6 minutes when idle. A randomized offer delay suppresses redundant peer responses. Synchronization is eventual, not instantaneous.
 - Peers compare compact record fingerprints, request unfamiliar versions in small pages, and transfer records in bounded fragments. New deaths and later class/race/guild/last-words enrichment become available during subsequent passes.
-- A client sends at most one channel packet every **1.5 seconds**. Large histories can take substantial time. Disconnects or missing packets time out; later passes try again. No complete-history guarantee is made when peers leave before synchronization finishes.
+- A client sends at most one channel packet every **3 seconds**. Large histories can take substantial time. Disconnects or missing packets time out; later passes try again. No complete-history guarantee is made when peers leave before synchronization finishes.
 - The matching rule requires the same name (case insensitive), level, death type, realm/faction when known, UTC receipt times within **5 minutes**, and no conflicting known killer name, killer level, or precise location. `Unknown` values do not prevent matching. This is a heuristic: clocks more than five minutes apart may produce duplicates, and otherwise indistinguishable repeat deaths may be ambiguous. Directly received repeat death notices are saved separately. Ambiguous matches are retained separately rather than silently collapsed.
 - Imported facts only fill unknown fields; known local values are retained. A direct server notice arriving after an imported record upgrades it to a locally received record. Incoming history does not trigger death sounds, toasts, or `/who` lookups. Log display is sorted by recorded UTC time; unknown timestamps are placed last.
 - Tooltips identify imported records and records supplemented by a peer. These are **peer-supplied, unauthenticated data**, not server-certified history. The dedicated channel is not private or encrypted. Shared fields include names, levels, death cause/place, class/race/guild, last words, and receipt timestamps.
@@ -131,6 +133,34 @@ Sharing is enabled by default. No player-name entry, grouping, or manual sync co
 - Normal chat windows hide this channel's protocol traffic and channel notices. Settings has **Automatically share death logs** and a **Sync status (hover)** indicator. Uncheck it (or use `/hcd sync`) to stop sending/receiving and leave the channel. Reset restores sharing to on. Recording local server notices works independently of sharing.
 
 The protocol uses length-prefixed plain data, strict size/type checks, per-sender limits, bounded queues, and no execution of received Lua. The server's channel limits, moderation, or channel availability can prevent sharing; local death recording continues.
+
+### Sync troubleshooting and transport fix (1.4.4)
+
+**Update both users to 1.4.4**, leave automatic sharing enabled, and stay online on the same realm/faction. This release sends chat-safe colon-separated envelopes rather than raw `|` framing, and prioritizes control packets over bulk data so handshakes do not expire in the outgoing queue. It accepts old framing for diagnostics, but older versions cannot understand the new outgoing envelopes, so mixed versions should not be used for synchronization. The channel name remains `HCDeathsSyncV2`.
+
+Run this on each client:
+
+```text
+/hcd sync check
+```
+
+This requests discovery without the normal 5–6 minute wait (or reports an ongoing session). It does not turn sharing on if you disabled it. After roughly 30 seconds, run:
+
+```text
+/hcd sync status
+```
+
+Version 1.4.4 also retries a missing inventory/data request or requests only missing record fragments after approximately 25 seconds without progress, up to three retries per request stage. Already received fragments are retained. The sender caches one immutable serialized record per active session so a retry cannot mix versions if details change mid-transfer. Completed or abandoned sessions release the sender's snapshot. Both peers must update for selective retransmission support. A permanently unavailable peer still times out and is tried in a later discovery pass.
+
+The report includes channel ID, current player/realm/faction, local send attempts/successes/errors, received protocol messages, own echoes, peer packets, handshake/inventory/data/decode counts, imported/enriched/filtered records, and shareable saved deaths. Additional lines show retransmission/timeouts and the current record's received/expected fragment counts. Settings' sync hover also shows basic transport counters and errors.
+
+- Channel ID **0** means channel membership has not been confirmed.
+- A locally successful send is not proof of server delivery. Own echoes can demonstrate a round trip on servers that echo the sender; **zero echoes alone do not prove failure**.
+- Zero peer packets means no compatible peer traffic has been received by that client. Check both users' versions, online state, realm/faction, and reports.
+- Peer packets with no inventory or decoded records point to later handshake/transfer stages. Invalid payloads, field validation failures, pruning filters, and client API errors have separate diagnostics.
+- Shareable records may be fewer than visible records because missing timestamps, unsupported text/size, or realm/faction tags prevent transfer.
+
+The latest bounded diagnostic snapshot is stored in `HCDeaths_SyncStatus` in SavedVariables, refreshed approximately every 30 seconds and when explicitly requested or a runtime/send error is detected. Send errors are no longer silently discarded: they are recorded and retried with a delay, with at most three attempts per queued send failure sequence. Automatic operation remains silent in chat. The protocol tolerates case-folded envelope/target names while hex-encoded record text preserves original bytes.
 
 ## Gravestone observations (1.3.0)
 

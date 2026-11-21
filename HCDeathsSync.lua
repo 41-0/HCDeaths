@@ -2,7 +2,7 @@
 -- WoW 1.12 / Lua 5.0. No executable serialization or external libraries.
 local addon=HCDeaths_API
 if not addon then return end
-local S={channel="HCDeathsSyncV2",queue={},seen={},offers={},round=0}
+local S={channel="HCDeathsSyncV2",queue={},seen={},offers={},round=0,stats={}}
 addon.Sync=S
 local fields={"playerName","playerLevel","deathType","killerName","killerLevel",
     "killerClass","location","zone","playerClass","playerRace","playerGuild",
@@ -18,6 +18,74 @@ local function integer(v,lo,hi)
 end
 local function player(v)
     return type(v)=="string" and string.len(v)<=48 and string.find(v,"^[%a\128-\255]+$")
+end
+local function sameName(a,b)
+    return type(a)=="string" and type(b)=="string" and string.lower(a)==string.lower(b)
+end
+local function decodeEnvelope(message)
+    if type(message)~="string" then return nil end
+    local prefix=string.lower(string.sub(message,1,6))
+    local target,kind,body
+    local a,b
+    if prefix=="hcds2:" then
+        a,b,target,kind,body=string.find(message,"^[^:]+:([^:]+):(%a):(.*)$")
+    elseif prefix=="hcds2|" then
+        -- Receive legacy framing, but never send WoW markup in ordinary chat.
+        a,b,target,kind,body=string.find(message,"^[^|]+|([^|]+)|(%a)|(.*)$")
+    end
+    if not target then return nil end
+    kind=string.upper(kind)
+    if not string.find("HOQIGDNF",kind,1,true) then return nil end
+    return target,kind,body
+end
+function S:Count(key)
+    self.stats[key]=(self.stats[key] or 0)+1
+end
+function S:ChannelID()
+    if not GetChannelName then return 0 end
+    local ok,id=pcall(GetChannelName,self.channel)
+    if not ok then self.lastError=string.sub(tostring(id),1,300);return 0 end
+    return tonumber(id) or 0
+end
+function S:SaveStatus()
+    local stats={}
+    for key,value in pairs(self.stats) do stats[key]=value end
+    local realm,faction=self:Context()
+    HCDeaths_SyncStatus={version="1.4.4-fork",utc=date("!%Y/%m/%d %H:%M:%S"),
+        enabled=HCDeaths_Settings.sync and true or false,status=self.status,channel=self.channel,
+        channelID=self:ChannelID(),realm=realm,faction=faction,player=UnitName("player"),
+        stats=stats,lastError=self.lastError,lastReject=self.lastReject,lastPeer=self.lastPeer,
+        lastPacket=self.lastPacket,queue=table.getn(self.queue),
+        peer=self.pull and self.pull.peer,cursor=self.pull and self.pull.cursor,
+        waitingIndex=self.pull and self.pull.wait and self.pull.wait.index,
+        receivedParts=self.pull and self.pull.received,totalParts=self.pull and self.pull.total,
+        nextHelloSeconds=math.max(0,math.ceil((self.nextHello or 0)-GetTime()))}
+end
+function S:Report(check)
+    if check then
+        self.nextJoin=0
+        if not self.pull and not self.discovery then self.nextHello=GetTime() end
+        self:SafeTick()
+    end
+    self:SaveStatus()
+    local d=HCDeaths_SyncStatus;local c=d.stats
+    addon:print("Sync 1.4.4: "..tostring(d.status).."; enabled="..tostring(d.enabled))
+    addon:print("Channel "..d.channel..": id="..d.channelID.."; player="..tostring(d.player).."; realm="..tostring(d.realm).."; faction="..tostring(d.faction))
+    addon:print("TX attempted/local OK/errors: "..(c.attempted or 0).."/"..(c.sent or 0).."/"..(c.sendErrors or 0).."; queue="..d.queue)
+    addon:print("RX protocol/self echo/peer packets: "..(c.wire or 0).."/"..(c.echo or 0).."/"..(c.peerPackets or 0).."; last peer="..tostring(d.lastPeer or "none"))
+    addon:print("Offers/inventory/chunks/decoded/invalid: "..(c.offers or 0).."/"..(c.inventory or 0).."/"..(c.chunks or 0).."/"..(c.decoded or 0).."/"..(c.invalid or 0))
+    addon:print("Imported/enriched/filtered: "..(c.imported or 0).."/"..(c.enriched or 0).."/"..(c.filtered or 0))
+    addon:print("Retransmissions/timeouts: "..(c.retries or 0).."/"..(c.timeouts or 0).."; waiting record="..tostring(d.waitingIndex or "none").."; parts="..(d.receivedParts or 0).."/"..(d.totalParts or 0))
+    local shareable,total=0,0
+    for _,r in ipairs(HCDeaths) do
+        if r.deathType=="PVE" or r.deathType=="PVP" then
+            total=total+1
+            if self:Eligible(r) and self:Stamp(r) and self:Pack(r) then shareable=shareable+1 end
+        end
+    end
+    addon:print("Shareable saved deaths: "..shareable.."/"..total.."; next discovery in "..d.nextHelloSeconds.." seconds (unless syncing)")
+    if d.lastError then addon:print("Last sync error: "..d.lastError) end
+    if d.lastReject then addon:print("Last rejected packet: "..d.lastReject) end
 end
 -- Pure UTC conversion: independent of the receiving machine's timezone.
 function S:Stamp(r)
@@ -100,16 +168,16 @@ function S:Unpack(data)
         local a,b,length=string.find(string.sub(data,pos),"^(%d+):")
         if b then b=b+pos-1 end
         -- Lua 5.0 anchors with an init position are not relied upon.
-        if not a then return nil end
+        if not a then return nil,"Missing field length: "..key end
         local size=integer(length,0,key=="lastWords" and 1024 or 160)
-        if not size or b+size>string.len(data) then return nil end
+        if not size or b+size>string.len(data) then return nil,"Invalid field size: "..key end
         local v=string.sub(data,b+1,b+size)
-        if string.find(v,"[%z\1-\31]") or string.find(v,"|") then return nil end
+        if string.find(v,"[%z\1-\31]") or string.find(v,"|") then return nil,"Unsupported field text: "..key end
         r[key]=v;pos=b+size+1
     end
     if pos~=string.len(data)+1 or not player(r.playerName) or not integer(r.playerLevel,1,60)
-        or (r.deathType~="PVE" and r.deathType~="PVP") or not self:Stamp(r) or not self:Eligible(r) then return nil end
-    if known(r.gravePositionKind) and not self:ValidGrave(r) then return nil end
+        or (r.deathType~="PVE" and r.deathType~="PVP") or not self:Stamp(r) or not self:Eligible(r) then return nil,"Invalid identity, date, realm or faction" end
+    if known(r.gravePositionKind) and not self:ValidGrave(r) then return nil,"Invalid grave coordinate bundle" end
     return r
 end
 function S:Fingerprint(data)
@@ -167,30 +235,37 @@ end
 function S:Import(r,sender)
     local old=self:Find(r)
     if not self:Eligible(r) then return end
-    if not old and addon.Retention and not addon.Retention:AllowImported(r) then return end
+    if not old and addon.Retention and not addon.Retention:AllowImported(r) then self:Count("filtered");return end
     if old then
-        if self:Merge(old,r,false) then old.sharedDetails=true;old.detailsSource=sender end
+        if self:Merge(old,r,false) then self:Count("enriched");old.sharedDetails=true;old.detailsSource=sender end
         self:Remember(old)
         if addon.RefreshToastLastWords then addon:RefreshToastLastWords(old) end
-    else r.shared=true;r.sourcePlayer=sender;table.insert(HCDeaths,r);self:Remember(r) end
+    else self:Count("imported");r.shared=true;r.sourcePlayer=sender;table.insert(HCDeaths,r);self:Remember(r) end
     if addon.Retention then addon.Retention:Enforce() end
     addon:updateLog() -- Imported history never enters the toast or /who queues.
 end
 function S:Enqueue(target,kind,body)
-    local msg="HCDS2|"..target.."|"..kind.."|"..body
+    local msg="HCDS2:"..target..":"..kind..":"..body
     if string.len(msg)>240 or table.getn(self.queue)>=128 then return false end
+    -- Prioritize handshakes and requests over bulk data fragments.
+    if kind~="D" then
+        for i,queued in ipairs(self.queue) do
+            local destination,queuedKind=decodeEnvelope(queued)
+            if queuedKind=="D" then table.insert(self.queue,i,msg);return true end
+        end
+    end
     table.insert(self.queue,msg);return true
 end
 function S:IsChannel(name,number,full)
     if type(name)=="string" and string.lower(name)==string.lower(self.channel) then return true end
     if type(full)=="string" and string.find(string.lower(full),"^%d+%. "..string.lower(self.channel).."$") then return true end
-    local id=GetChannelName and GetChannelName(self.channel)
-    return id and id>0 and tonumber(number)==id
+    local id=self:ChannelID()
+    return id>0 and tonumber(number)==id
 end
 function S:Next()
     local p=self.pull
     if not p then return end
-    p.parts=nil;p.received=0;p.total=nil
+    p.parts=nil;p.received=0;p.total=nil;p.retries=0;p.retryAt=GetTime()+25
     local item=table.remove(p.items,1)
     if item then
         p.wait=item;p.deadline=GetTime()+90
@@ -198,17 +273,48 @@ function S:Next()
     elseif p.cursor>0 then
         p.wait=nil;p.deadline=GetTime()+90
         self:Enqueue(p.peer,"Q",p.token..","..p.cursor)
-    else self.pull=nil;self.status="Up to date with "..p.peer end
+    else self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Up to date with "..p.peer end
+end
+function S:RetryPull(now)
+    local p=self.pull
+    if not p or now<(p.retryAt or p.deadline) then return end
+    if (p.retries or 0)>=3 then
+        self:Count("timeouts");self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Peer timeout after retries; trying later";return
+    end
+    p.retries=(p.retries or 0)+1;p.retryAt=now+25;p.deadline=now+90
+    self:Count("retries")
+    if p.wait then
+        local body=p.token..","..p.wait.index
+        if p.total then
+            local mask={}
+            for group=0,15 do
+                local bits=0
+                for bit=0,3 do
+                    local part=group*4+bit+1
+                    if part<=p.total and not (p.parts and p.parts[part]) then bits=bits+2^bit end
+                end
+                table.insert(mask,string.format("%X",bits))
+            end
+            body=body..","..table.concat(mask)
+        end
+        self:Enqueue(p.peer,"G",body)
+    else self:Enqueue(p.peer,"Q",p.token..","..p.cursor) end
 end
 -- Called once by the dedicated event frame, never once per chat window.
 function S:Receive(message,sender)
-    if not HCDeaths_Settings.sync or not player(sender) or sender==UnitName("player") or type(message)~="string"
-        or string.len(message)>240 then return end
-    local _,_,target,kind,body=string.find(message,"^HCDS2|([^|]+)|([HOQIGDN])|(.*)$")
-    if not target then return end
+    if not HCDeaths_Settings.sync or type(message)~="string" or string.len(message)>240 then return end
+    local target,kind,body=decodeEnvelope(message)
+    if not target then
+        if string.find(string.lower(message),"^hcds") then self:Count("incompatible");self.lastReject="Unrecognized protocol/framing" end
+        return
+    end
+    self:Count("wire")
+    if sameName(sender,UnitName("player")) then self:Count("echo");return end
+    if not player(sender) then self:Count("rejectedSender");self.lastReject="Invalid sender name: "..string.sub(tostring(sender),1,80);return end
     local now=GetTime()
-    if kind=="O" and self.offer and self.offer.target==target and self.offer.token==body then self.offer=nil end
-    if target~="*" and target~=UnitName("player") then return end
+    if kind=="O" and self.offer and sameName(self.offer.target,target) and self.offer.token==body then self.offer=nil end
+    if target~="*" and not sameName(target,UnitName("player")) then return end
+    self:Count("peerPackets");self.lastPeer=sender;self.lastPacket=kind
     -- Bound work per sender and the total sender cache.
     local rate=self.rates[sender]
     if not rate then
@@ -220,15 +326,26 @@ function S:Receive(message,sender)
     if kind=="H" and target=="*" and string.find(body,"^%d+$") and string.len(body)<=12 then
         if not self.offer and (not self.grant or now>self.grant.untilTime) then self.offer={target=sender,token=body,due=now+2+math.random()*6} end
     elseif kind=="O" and self.discovery and body==self.discovery.token then
+        self:Count("offers")
         if not self.discovery.peer then self.discovery.peer=sender end
+    elseif kind=="F" then
+        if self.grant and sameName(self.grant.peer,sender) and self.grant.token==body then
+            self.grant=nil
+            for i=table.getn(self.queue),1,-1 do
+                local target,k,payload=decodeEnvelope(self.queue[i])
+                if sameName(target,sender) and k=="D" and string.sub(payload,1,string.len(body)+1)==body.."," then table.remove(self.queue,i) end
+            end
+        end
     elseif kind=="Q" or kind=="G" then
-        local _,_,token,index=string.find(body,"^(%d+),(%d+)$")
+        local _,_,token,index,missing=string.find(body,"^(%d+),(%d+),(%x+)$")
+        if not token then _,_,token,index=string.find(body,"^(%d+),(%d+)$") end
+        if missing and (kind~="G" or string.len(missing)~=16) then return end
         index=integer(index,0,1000000000)
         if not token or string.len(token)>12 or not index then return end
         -- Only service the peer to which we recently offered synchronization.
         local grant=self.grant
-        if not grant or grant.peer~=sender or grant.token~=token or now>grant.untilTime then return end
-        grant.untilTime=now+180
+        if not grant or not sameName(grant.peer,sender) or grant.token~=token or now>grant.untilTime then return end
+        grant.untilTime=now+600
         local records=grant.records
         if not records then return end
         if kind=="Q" then
@@ -251,20 +368,39 @@ function S:Receive(message,sender)
                 self:Enqueue(sender,"N",token..","..index);return
             end
             if not self:Eligible(r) or (r.deathType~="PVE" and r.deathType~="PVP") then return end
-            local data=self:Pack(r);if not data then return end
-            local hex=string.gsub(data,".",function(c) return string.format("%02X",string.byte(c)) end)
-            local total=math.ceil(string.len(hex)/128)
-            if total>64 or table.getn(self.queue)+total>128 then return end
-            for part=1,total do
-                self:Enqueue(sender,"D",token..","..index..","..part..","..total..","..string.sub(hex,(part-1)*128+1,part*128))
+            local cache=grant.dataCache
+            if not cache or cache.index~=index then
+                if missing then self:Enqueue(sender,"N",token..","..index);return end
+                local data=self:Pack(r);if not data then return end
+                local hex=string.gsub(data,".",function(c) return string.format("%02X",string.byte(c)) end)
+                cache={index=index,hex=hex,total=math.ceil(string.len(hex)/128)}
+                if cache.total>64 then return end
+                grant.dataCache=cache
+            end
+            for part=1,cache.total do
+                local wanted=not missing
+                if missing then
+                    local nibble=tonumber(string.sub(missing,math.ceil(part/4),math.ceil(part/4)),16)
+                    wanted=math.mod(math.floor(nibble/2^math.mod(part-1,4)),2)==1
+                end
+                if wanted then
+                    local payload=token..","..index..","..part..","..cache.total..","..string.sub(cache.hex,(part-1)*128+1,part*128)
+                    local queued=false
+                    for _,message in ipairs(self.queue) do
+                        local dest,k,b=decodeEnvelope(message)
+                        if sameName(dest,sender) and k=="D" and b==payload then queued=true;break end
+                    end
+                    if not queued then self:Enqueue(sender,"D",payload) end
+                end
             end
         end
     elseif kind=="I" then
         local p=self.pull
         local _,_,token,cursor,entries=string.find(body,"^(%d+),(%d+),(.*)$")
         cursor=integer(cursor,0,1000000000)
-        if not p or p.peer~=sender or token~=p.token or not cursor or p.wait then return end
+        if not p or not sameName(p.peer,sender) or token~=p.token or not cursor or p.wait then return end
         if p.requestedCursor and p.requestedCursor>0 and cursor>=p.requestedCursor then return end
+        self:Count("inventory")
         p.cursor=cursor;p.items={}
         local count=0
         for item in string.gfind(entries,"[^;]+") do
@@ -278,23 +414,27 @@ function S:Receive(message,sender)
     elseif kind=="N" then
         local p=self.pull
         local _,_,token,index=string.find(body,"^(%d+),(%d+)$")
-        if p and p.peer==sender and token==p.token and p.wait and tonumber(index)==p.wait.index then self:Next() end
+        if p and sameName(p.peer,sender) and token==p.token and p.wait and tonumber(index)==p.wait.index then self:Next() end
     elseif kind=="D" then
         local p=self.pull
         local _,_,token,index,part,total,hex=string.find(body,"^(%d+),(%d+),(%d+),(%d+),(%x+)$")
         part=integer(part,1,64);total=integer(total,1,64)
-        if not p or sender~=p.peer or token~=p.token or not p.wait or tonumber(index)~=p.wait.index
+        if not p or not sameName(sender,p.peer) or token~=p.token or not p.wait or tonumber(index)~=p.wait.index
             or not part or not total or part>total or string.len(hex)>128 or math.mod(string.len(hex),2)~=0 then return end
         if p.total and p.total~=total then return end
+        self:Count("chunks")
         p.parts=p.parts or {};p.total=total
-        if not p.parts[part] then p.parts[part]=hex;p.received=p.received+1 end
-        p.deadline=now+90
+        if not p.parts[part] then
+            p.parts[part]=hex;p.received=p.received+1
+            p.deadline=now+90;p.retryAt=now+25
+        end
         if p.received==total then
             local all=table.concat(p.parts)
             local data=string.gsub(all,"%x%x",function(pair) return string.char(tonumber(pair,16)) end)
             -- Records can be enriched between their inventory and data replies.
-            local r=self:Unpack(data)
-            if r then self:Import(r,sender);self:MarkSeen(self:Fingerprint(data)) end
+            local r,reason=self:Unpack(data)
+            if r then self:Count("decoded");self:Import(r,sender);self:MarkSeen(self:Fingerprint(data))
+            else self:Count("invalid");self.lastReject=reason or "Invalid record data" end
             p.total=nil;self:Next()
         end
     end
@@ -323,10 +463,14 @@ function S:Tick()
         if self.initCursor<=table.getn(HCDeaths) then self.status="Indexing saved logs";return end
         self.initialized=true
     end
-    local id=GetChannelName(self.channel)
-    if not id or id==0 then
+    local id=self:ChannelID()
+    if id==0 then
         self.status="Waiting for channel"
-        if now>=(self.nextJoin or 0) then self.nextJoin=now+60;JoinChannelByName(self.channel);self.joined=true end
+        if now>=(self.nextJoin or 0) then
+            self.nextJoin=now+60;self:Count("joinAttempts")
+            local ok,err=pcall(JoinChannelByName,self.channel)
+            if ok then self.joined=true else self.lastError=string.sub(tostring(err),1,300);self.status="Channel join failed" end
+        end
         return
     end
     self.joined=true
@@ -336,13 +480,13 @@ function S:Tick()
         self:Enqueue(self.offer.target,"O",self.offer.token)
         local snapshot={}
         for i,r in ipairs(HCDeaths) do snapshot[i]=r end
-        self.grant={peer=self.offer.target,token=self.offer.token,untilTime=now+180,records=snapshot};self.offer=nil
+        self.grant={peer=self.offer.target,token=self.offer.token,untilTime=now+600,records=snapshot};self.offer=nil
     end
-    if self.pull and now>self.pull.deadline then self.pull=nil;self.status="Peer timeout; retrying later" end
+    self:RetryPull(now)
     if self.discovery and now>=self.discovery.deadline then
         local d=self.discovery;self.discovery=nil
         if d.peer then
-            self.pull={peer=d.peer,token=d.token,cursor=0,items={},deadline=now+90}
+            self.pull={peer=d.peer,token=d.token,cursor=0,items={},deadline=now+90,retries=0,retryAt=now+25}
             self.status="Syncing with "..d.peer
             self:Enqueue(d.peer,"Q",d.token..",0")
         else self.status="Waiting for other users" end
@@ -354,9 +498,27 @@ function S:Tick()
         self:Enqueue("*","H",token);self.nextHello=now+300+math.random(0,60)
     end
     if table.getn(self.queue)>0 and now>=(self.nextSend or 0) then
-        local msg=table.remove(self.queue,1)
-        self.nextSend=now+1.5
-        pcall(SendChatMessage,msg,"CHANNEL",nil,id)
+        local msg=self.queue[1]
+        self.nextSend=now+3;self:Count("attempted")
+        local ok,err=pcall(SendChatMessage,msg,"CHANNEL",nil,id)
+        if ok then self:Count("sent");table.remove(self.queue,1);self.sendFailures=0
+        else
+            self:Count("sendErrors");self.lastError=string.sub(tostring(err),1,300)
+            self.status="Channel send failed";self.nextSend=now+5
+            self.sendFailures=(self.sendFailures or 0)+1
+            if self.sendFailures>=3 then table.remove(self.queue,1);self.sendFailures=0 end
+            self:SaveStatus()
+        end
+    end
+end
+function S:SafeTick()
+    local ok,err=pcall(self.Tick,self)
+    if not ok then
+        self:Count("runtimeErrors");self.status="Sync runtime error"
+        self.lastError=string.sub(tostring(err),1,300)
+    end
+    if not self.nextStatus or GetTime()>=self.nextStatus or not ok then
+        self.nextStatus=GetTime()+30;self:SaveStatus()
     end
 end
 S.rates={};S.rateCount=0;S.nextHello=GetTime()+20+math.random(0,30)
@@ -365,10 +527,13 @@ local frame=CreateFrame("Frame",nil,UIParent)
 S.frame=frame
 frame:RegisterEvent("CHAT_MSG_CHANNEL")
 frame:SetScript("OnEvent",function()
-    if S:IsChannel(arg9,arg8,arg4) then S:Receive(arg1,arg2) end
+    if S:IsChannel(arg9,arg8,arg4) then
+        local ok,err=pcall(S.Receive,S,arg1,arg2)
+        if not ok then S:Count("runtimeErrors");S.lastError=string.sub(tostring(err),1,300);S.status="Sync receive error";S:SaveStatus() end
+    end
 end)
 local elapsed=0
 frame:SetScript("OnUpdate",function()
     elapsed=elapsed+(arg1 or 0)
-    if elapsed>=0.5 then elapsed=0;S:Tick() end
+    if elapsed>=0.5 then elapsed=0;S:SafeTick() end
 end)

@@ -2,6 +2,25 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.4.4-fork — 2026-11-21
+
+- Recover partial sync transfers by retaining received fragments and requesting only missing fragments after a no-progress interval.
+- Retry missing inventory and initial record requests up to three times per request stage before timing out.
+- Cache a stable serialized record while retransmitting to avoid mixing enriched record versions.
+- Slow normal channel transmission to one packet every three seconds.
+- Release session snapshots at completion/abandonment and report retransmissions, timeouts, and fragment progress.
+- Test recovery from selectively dropped data fragments and inventory requests within the same synchronization session.
+
+## 1.4.3-fork — 2026-11-21
+
+- Replace unsafe pipe-separated ordinary-chat envelopes with colon framing; both peers must update.
+- Prioritize discovery/handshake/request packets over bulk data so they do not time out while queued.
+- Tolerate case-folded envelope and player-name routing without changing record payload bytes.
+- Add `/hcd sync check` and `/hcd sync status`, including channel membership, send/receive/echo counters, transfer stages, imports, filters, validation failures, and shareable log counts.
+- Save the latest compact synchronization diagnostic snapshot and surface errors in the GUI hover.
+- Capture previously discarded send failures, retry with a delay, and contain client API/runtime errors.
+- Extend multi-client tests to reject pipe markup, fold envelope casing, and simulate send failures.
+
 ## 1.4.2-fork — 2026-11-21
 
 - Fix grave-coordinate capture on Lua 5.0, where `math.huge` is unavailable and negating it raised an error.

@@ -929,6 +929,11 @@ local function HCDeaths_commands(msg, editbox, silent)
         if HCDeath.ToggleGUI then HCDeath:ToggleGUI() end
         return
     end
+    if msg=="sync status" or msg=="sync check" then
+        if HCDeath.Sync then HCDeath.Sync:Report(msg=="sync check")
+        else HCDeath:print("Sync module not loaded. Install the full HCDeaths folder, then /reload.") end
+        return
+    end
     if msg=="grave status" or msg=="grave check" then
         if HCDeath.Graves then HCDeath.Graves:Report(msg=="grave check")
         else HCDeath:print("Grave module not loaded. Install HCDeathsGraves.lua with the full addon folder, then /reload.") end
@@ -977,6 +982,7 @@ local function HCDeaths_commands(msg, editbox, silent)
             feedback("/hcd log scale number | toast scale number | toast time seconds")
             feedback("/hcd log max number (0 = unlimited) | prune level number | prune days number | prune keep number")
             feedback("/hcd grave check | grave status - grave recording diagnostics")
+            feedback("/hcd sync check | sync status - synchronization diagnostics")
         end
     end
     if HCDeath.RefreshGUI then HCDeath:RefreshGUI() end
