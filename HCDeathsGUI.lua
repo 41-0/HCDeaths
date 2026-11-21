@@ -56,6 +56,11 @@ syncStatus:SetScript("OnEnter",function()
         local s=addon.Sync;local c=s.stats or {}
         GameTooltip:AddLine("Channel ID: "..s:ChannelID().." / TX: "..(c.sent or 0).." / RX peers: "..(c.peerPackets or 0).." / own echo: "..(c.echo or 0),1,1,1,true)
         GameTooltip:AddLine("Send spacing: "..(s.sendInterval or 10).."+ seconds / cooldown: "..math.max(0,math.ceil((s.pauseUntil or 0)-GetTime())).." seconds",.7,.7,.7,true)
+        GameTooltip:AddLine("Imported: "..(c.imported or 0).." / updated: "..(c.enriched or 0).." / queued sends: "..table.getn(s.queue),1,1,1,true)
+        local peer=s.pull and s.pull.peer or s.lastPeer
+        local compact=peer and s.capabilities and s.capabilities[string.lower(peer)]
+        GameTooltip:AddLine("Transfer mode: "..(compact and "compact" or "standard (update both players for compact mode)"),.7,.7,.7,true)
+        if s.pull and s.pull.total then GameTooltip:AddLine("Current record fragments: "..(s.pull.received or 0).." / "..s.pull.total,.7,.7,.7) end
         if s.lastError then GameTooltip:AddLine("Error: "..s.lastError,1,.3,.3,true) end
         GameTooltip:AddLine("/hcd sync check, then /hcd sync status",0.7,0.7,0.7)
     end
@@ -114,7 +119,7 @@ end)
 help:SetScript("OnLeave",function() GameTooltip:Hide() end)
 button("Close",280,-417,230,function() window:Hide() end)
 button("Manage saved logs",20,-465,490,function() addon:ToggleLogManagement() end)
-label("Log: 20 entries per page. Minimap: left = settings, right = log.",20,-505)
+label("Log: 20 entries per page. Minimap: left = settings, right = log.",20,-545)
 
 function addon:RefreshGUI()
     for key,c in pairs(controls) do c:SetChecked(HCDeaths_Settings[key]) end

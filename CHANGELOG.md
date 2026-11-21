@@ -2,6 +2,25 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.5.0-fork — 2026-11-21
+
+- Limit automatic grants to the newest 100 shareable entries, independent of local retention settings; bound automatic intake from legacy senders too.
+- Skip unchanged peer inventories using recent-history digests, enlarge negotiated inventory pages within the packet limit, and space idle discovery at 10–12 minutes.
+- Add a dedicated full-history request/cancel dialog and per-transfer sender approval. Keep full-history transfers paced, validated and subject to retention rules.
+- Show a small draggable top-right consent panel without sound or focus capture; defer it during combat and guard the approval action itself.
+- Bound and consolidate pending requests, rate-limit repeated requests, expire unanswered requests after 10 minutes, and support decline/cancellation.
+- Preserve automatic interoperability with 1.4.5/1.4.6; require 1.5.0+ for manual full history.
+- Verify mocked multi-client consent, combat deferral, newest-100 enforcement, unchanged skipping, cancellation, expiry and existing regression suites. Actual 1.12 UI verification remains necessary.
+
+## 1.4.6-fork — 2026-11-21
+
+- Negotiate compact transfers between updated peers while retaining full-format fallback for older versions.
+- Omit unknown fields, preserve known empty values and original text bytes, use case-fold-safe base32, and fit larger fragments within the 240-byte packet limit.
+- Start syncing after the first peer offer instead of waiting out the full discovery deadline.
+- Keep the chat pacing, cooldown/backoff, partial-transfer retry and retention behavior intact.
+- Show imported/enriched counts, send queue, transfer mode and fragment progress in the sync hover.
+- Test compact/full round trips, all-byte encoding, missing-fragment recovery and mixed 1.4.5/1.4.6 peers; the sample data transfer shrinks from five packets to two.
+
 ## 1.4.5-fork — 2026-11-21
 
 - Reduce normal sync traffic to one packet every 10–12 seconds initially.

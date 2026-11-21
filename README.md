@@ -119,12 +119,12 @@ These cleanup actions do not establish a minimum level for future death recordin
 
 Synchronization uses stable per-session inventory references so that deletions cannot change an advertised index to point at a different death. Deleted requests are skipped by updated peers. When a cap is enabled, the synchronization fingerprint cache is also bounded. The transport remains compatible with protocol V2 peers; older peers may time out and retry if an entry is deleted during a transfer.
 
-## Automatic log sharing (1.3.0, experimental)
+## Automatic log sharing (1.5.0)
 
-Sharing is enabled by default. No player-name entry, grouping, or manual sync command is needed. The addon joins the custom channel **HCDeathsSyncV2**, discovers another compatible user after a randomized startup delay, and periodically reconciles saved PvE/PvP logs. This transport targets **the same realm and faction**. Opposite-faction sharing is not implemented. It requires other users running version 1.3.0 or a compatible protocol version, and a server that permits custom-channel traffic. Actual Octo channel behavior must still be tested in game.
+Sharing is enabled by default. No player-name entry, grouping, or manual sync command is needed. The addon joins the custom channel **HCDeathsSyncV2**, discovers another compatible user after a randomized startup delay, and periodically reconciles the latest **100 shareable PvE/PvP deaths per peer**, selected by recorded UTC timestamp. This does not limit local storage. Updated senders enforce this boundary on the records they offer. This transport targets **the same realm and faction**. Opposite-faction sharing is not implemented. Use version 1.5.0 on both clients for the latest sharing and approval behavior, and a server that permits custom-channel traffic. Earlier synchronization was confirmed on Octo; the new 1.5.0 controls still need in-game verification.
 
-- Discovery repeats approximately every 5–6 minutes when idle. A randomized offer delay suppresses redundant peer responses. Synchronization is eventual, not instantaneous.
-- Peers compare compact record fingerprints, request unfamiliar versions in small pages, and transfer records in bounded fragments. New deaths and later class/race/guild/last-words enrichment become available during subsequent passes.
+- Discovery repeats approximately every 10–12 minutes when idle. A randomized offer delay suppresses redundant peer responses. Synchronization is eventual, not instantaneous.
+- Updated peers compare a digest of the recent snapshot and skip the inventory entirely when that same peer has not changed since a completed pass. Inventory pages pack up to six fingerprints within the packet limit. Peers compare compact record fingerprints, request unfamiliar versions in small pages, and transfer records in bounded fragments. New deaths and later class/race/guild/last-words enrichment become available during subsequent passes.
 - A client sends at most one channel packet every **10–12 seconds** initially. Large histories can take substantial time. Disconnects or missing packets time out; later passes try again. No complete-history guarantee is made when peers leave before synchronization finishes.
 - The matching rule requires the same name (case insensitive), level, death type, realm/faction when known, UTC receipt times within **5 minutes**, and no conflicting known killer name, killer level, or precise location. `Unknown` values do not prevent matching. This is a heuristic: clocks more than five minutes apart may produce duplicates, and otherwise indistinguishable repeat deaths may be ambiguous. Directly received repeat death notices are saved separately. Ambiguous matches are retained separately rather than silently collapsed.
 - Imported facts only fill unknown fields; known local values are retained. A direct server notice arriving after an imported record upgrades it to a locally received record. Incoming history does not trigger death sounds, toasts, or `/who` lookups. Log display is sorted by recorded UTC time; unknown timestamps are placed last.
@@ -132,11 +132,21 @@ Sharing is enabled by default. No player-name entry, grouping, or manual sync co
 - Existing untagged logs are adopted into the realm/faction of the first sync-enabled login. If an old account-wide log already mixed several realms or factions, those original origins cannot be recovered automatically. New records carry explicit realm/faction tags. Records with invalid/missing timestamps or fields exceeding transport limits remain available locally but are not shared.
 - Normal chat windows hide this channel's protocol traffic and channel notices. Settings has **Automatically share death logs** and a **Sync status (hover)** indicator. Uncheck it (or use `/hcd sync`) to stop sending/receiving and leave the channel. Reset restores sharing to on. Recording local server notices works independently of sharing.
 
+### Requesting full history
+
+Open settings → **Full history sharing...**, enter the sender's character name (the last detected peer is filled in), and click **Request all** after discovery has finished. Both users must run **1.5.0 or later**, have sharing enabled, and remain online on the same realm/faction.
+
+The sender gets a small, draggable **top-right** notification with **Allow once** and **Decline**. It never steals keyboard focus or plays a sound. The notification stays hidden during combat and appears afterward if the request has not expired; accepting during combat is also blocked. Requests are combined in one panel, at most five are pending, and requests are limited to once per five minutes per peer. Ignored requests expire after **10 minutes**, including time spent in combat. Approval applies only to that requester and that transfer, never permanently. An active outgoing transfer must finish before another request can be approved.
+
+Either user can open the same dialog and click **Cancel transfer**. Full history has no entry-count limit, but still observes packet pacing, server cooldowns, validation, local storage caps and deletion rules. Only missing record versions are downloaded; existing known facts remain protected. Large histories can take hours. There is no automatic full-history upload and no promise of completion after either player leaves. The addon records only a session-local digest; relogging can require another inventory comparison.
+
+Automatic transfers remain compatible with 1.4.5/1.4.6 peers, with older encoding/metadata behavior as needed; their old senders do not implement the new consent interface. An updated receiver stops automatically after reviewing 100 inventory entries even when talking to an older sender. Update both players for chronological recent-100 selection, unchanged-snapshot skipping and manual full history.
+
 The protocol uses length-prefixed plain data, strict size/type checks, per-sender limits, bounded queues, and no execution of received Lua. The server's channel limits, moderation, or channel availability can prevent sharing; local death recording continues.
 
-### Sync troubleshooting and transport fix (1.4.5)
+### Sync troubleshooting
 
-**Update both users to 1.4.5**, leave automatic sharing enabled, and stay online on the same realm/faction. This release sends chat-safe colon-separated envelopes rather than raw `|` framing, and prioritizes control packets over bulk data so handshakes do not expire in the outgoing queue. It accepts old framing for diagnostics, but older versions cannot understand the new outgoing envelopes, so mixed versions should not be used for synchronization. The channel name remains `HCDeathsSyncV2`.
+**Update both users to 1.5.0**, leave automatic sharing enabled, and stay online on the same realm/faction. This release sends chat-safe colon-separated envelopes rather than raw `|` framing, and prioritizes control packets over bulk data so handshakes do not expire in the outgoing queue. It accepts old framing for diagnostics, but versions before 1.4.3 cannot understand the new outgoing envelopes. The channel name remains `HCDeathsSyncV2`.
 
 Run this on each client:
 
@@ -144,7 +154,7 @@ Run this on each client:
 /hcd sync check
 ```
 
-This requests discovery without the normal 5–6 minute wait (or reports an ongoing session). It does not turn sharing on if you disabled it. After roughly 30 seconds, run:
+This requests discovery without the normal 10–12 minute wait (or reports an ongoing session). It does not turn sharing on if you disabled it. After roughly 30 seconds, run:
 
 ```text
 /hcd sync status
@@ -157,6 +167,12 @@ Version 1.4.5 reduces ordinary-chat usage to a 10-second minimum plus up to 2 se
 Retry timing is increased to 90 seconds of no progress, requests still in the outgoing queue are not retried, and duplicate queued packets are suppressed. Discovery waits 90 seconds after the hello is actually sent, rather than timing out while it is waiting for a send slot. Local cooldown time also extends active timers. Slow but active data transfers keep the sender's session alive.
 
 Large initial histories can take considerably longer to converge at this spacing. Other addons and normal speech share server chat limits, so the addon cannot promise that no warning will ever occur. Sync status/hover shows the current spacing, cooldown and throttle count. No manual action is required to pause or resume after a recognized warning.
+
+Version 1.4.6 reduces packet count rather than increasing chat frequency. New peers advertise compact-transfer support; only mutually supported directions use sparse records that omit unknown fields, case-insensitive lowercase base32 encoding instead of hex, and fragments up to 192 characters while keeping the whole chat message under 240 bytes. Known empty values (such as no guild), punctuation, whitespace and text casing remain intact. The standard full record is reconstructed and validated before import. Actual packet savings depend on the fields present; a mocked sample required 2 data packets instead of 5.
+
+Old peers that do not advertise support continue using full records and 128-character hex fragments. In particular, mixed 1.4.5/1.4.6 transfers remain functional but do not gain compact mode. The channel and saved log format are unchanged. Update both players for the speed improvement. Initial discovery still waits for an offer, but begins synchronization immediately after a peer responds rather than always waiting the full discovery deadline.
+
+Sync hover now also shows imported/updated counts, queued sends, current fragment progress, and whether compact or standard mode is in use. First-time large histories still take time at the unchanged 10–12 second starting send interval, and server cooldown warnings still pause/back off traffic automatically.
 
 The report includes channel ID, current player/realm/faction, local send attempts/successes/errors, received protocol messages, own echoes, peer packets, handshake/inventory/data/decode counts, imported/enriched/filtered records, and shareable saved deaths. Additional lines show retransmission/timeouts and the current record's received/expected fragment counts. Settings' sync hover also shows basic transport counters and errors.
 
