@@ -2,6 +2,20 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.1.1-fork — 2026-11-21
+
+- Capture Octo's separate last-words system notice and attach it to the player's latest death received in this session.
+- Refresh active and queued death toasts and log details with the received words.
+- Leave missing last words as `Unknown`; stop using potentially stale ordinary chat as last words.
+
+## 1.1.0-fork — 2026-11-21
+
+- Save every recognized death immediately, using `Unknown` for unavailable information.
+- Separate queued `/who` enrichment from saving and toast display; timeouts never remove records.
+- Show unknown class/race icons safely and retain announced levels when enriching records.
+- Parse class, name, and level independently of trailing challenge descriptions in milestone announcements.
+- Remove minimum recorded level filtering, its GUI control, and its command; discard the obsolete setting on startup.
+
 ## 1.0.5-fork — 2026-11-20
 
 - Fix numeric field rendering with explicit opaque black backgrounds and borders.
@@ -50,17 +64,3 @@ These notes cover changes made by this fork, not releases by GryllsAddons.
 
 ### Changed
 
-- Removed the latest-50 display restriction.
-- Log starts hidden on first installation/upgrade and after Reset; subsequent visibility choices are preserved.
-- Bare `/hcd` and `/hcdeaths` now toggle Settings; `/hcd help` prints commands.
-- Reset also restores the minimap position and the first log page, while retaining recorded deaths.
-- Unsupported-client message no longer calls an addon object before it exists.
-
-### Preserved
-
-- Original author's copyright and MIT License, unchanged.
-- Original bundled media, saved-variable names, death parsing, and toast functionality.
-
-### Validation
-
-- Mocked API/frame regression tests passed; actual Turtle WoW client testing remains outstanding.

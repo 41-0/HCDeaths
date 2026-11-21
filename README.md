@@ -21,7 +21,7 @@ This is an independently modified version, not an official GryllsAddons release.
 - Makes every saved PvE/PvP death accessible through page buttons or the mouse wheel. No addon-imposed total record cap is added.
 - Hides the log on first installation/upgrade and after Reset. Subsequent visibility choices are saved; hidden logs continue recording.
 - Validates numeric settings and accepts decimal scales.
-- Retains original toast behavior, death parsing, saved-variable names, and bundled media. Reset does not delete deaths.
+- Retains saved-variable names and bundled media, with reliable recording and expanded announcement parsing. Reset does not delete deaths.
 
 See [CHANGELOG.md](CHANGELOG.md) for the fork's release notes.
 
@@ -57,7 +57,6 @@ Settings contains the original command operations: system messages, log visibili
 | `/hcd move` | Show/hide movable-toast preview |
 | `/hcd log` | Toggle death log |
 | `/hcd log scale number` | Set log scale |
-| `/hcd log minlevel number` | Set minimum recorded death level (1–60, default 10) |
 | `/hcd toast` | Toggle death toasts |
 | `/hcd toast scale number` | Set toast scale |
 | `/hcd toast time seconds` | Set toast duration |
@@ -70,23 +69,27 @@ Settings contains the original command operations: system messages, log visibili
 
 `/hcdeaths` is an alias for `/hcd`.
 
-## Minimum recorded death level
+## Reliable death recording
 
-The default minimum level is **10** (inclusive). Change **Minimum recorded level** in Settings and press Apply, or use `/hcd log minlevel 20`. Valid values are whole numbers **1–60**; use **1** to record all normal player death levels.
+Every recognized death notice is stored immediately, regardless of level or `/who` availability. Missing information is saved as `Unknown`; a question-mark icon represents an unknown class or race. A later successful `/who` response enriches the saved record. Lookups are queued, spaced at least 10 seconds apart, and time out after 5 seconds. Failed lookups never delete a death. These timings do not guarantee a server response.
 
-The threshold is captured when a new death notice arrives and applies when saving that PvE/PvP death. Existing saved logs are not hidden or deleted when the threshold changes. System messages, death toasts, sounds, and level-progress notifications continue following their own settings; this option controls log storage only. Reset restores the minimum to **10**.
+There is no minimum recorded level setting. Previously saved thresholds are discarded on startup. Existing records are preserved.
 
 ## Level-up toasts
 
 The parser supports Octo announcements such as `Rogue Notogii of guild Hell Fire has reached level 20. As they ascend towards immortality, their glory grows! However, so too does the danger they face.` It extracts the player's name and reached level correctly even when a guild name contains spaces. The equivalent format without a guild, and the original Turtle-style announcements, are also supported.
 
-Enable **Death toast popups** and **Level progress toasts** for milestone toasts. **Level-up sounds** controls their sound separately. Player race/class enrichment still uses the original `/who` flow, so a successful player lookup is required. The minimum death-log recording level does not filter milestone toasts.
+Enable **Death toast popups** and **Level progress toasts** for milestone toasts. **Level-up sounds** controls their sound separately. Toasts use the class, name, and reached level from the announcement without waiting for `/who`. Text following the level is ignored, including challenge descriptions such as `while enduring the Slow and steady challenge.` Unknown race or guild information does not block the toast.
 
 ## Death locations
 
 For current messages such as `Hardcore character Witch (level 32) has fallen to Torn Fin Tidehunter (level 32) in Western Strand`, the announced place is stored in a separate `location` field and shown in the log, tooltip, and toast. The broad `/who` zone remains in `zone` and is shown separately in the tooltip when different. Older entries without a saved location continue showing their zone; historical precise locations cannot be reconstructed from zone-only records.
 
 The current PvE message format above was supplied as a real example. Equivalent natural-cause and PvP formats are supported by parser tests but have not been verified against live messages. Legacy messages remain supported.
+
+## Last words
+
+Octo's follow-up system notice `Name's last words: "message"` updates that player's latest death received during the current session. The words are stored in `lastWords` and shown in the log tooltip and toast, including a toast already on screen. Queued toasts use the updated record. Without a follow-up notice, the value remains `Unknown`. Ordinary chat is no longer used to guess last words. Unmatched notices and repeated copies do not create death records or modify historical records loaded at login.
 
 ## Timestamps
 
@@ -113,7 +116,3 @@ Please report issues to this fork's repository, rather than asking the original 
 Distributed under the **MIT License**; see [LICENSE](LICENSE). The original copyright notice is retained unchanged:
 
 ```text
-Copyright (c) 2023 GryllsAddons
-```
-
-The fork's changes are also distributed under the MIT License. Keep the original copyright and complete license text when redistributing this addon. The original software is provided without warranty, as stated in LICENSE.

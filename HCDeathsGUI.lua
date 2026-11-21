@@ -5,7 +5,7 @@
 local addon=HCDeaths_API
 if not addon then return end
 local window=CreateFrame("Frame","HCDeathsConfig",UIParent)
-window:Hide();window:SetWidth(530);window:SetHeight(505)
+window:Hide();window:SetWidth(530);window:SetHeight(465)
 window:SetPoint("CENTER",UIParent,"CENTER",0,0)
 window:SetFrameStrata("DIALOG");window:SetMovable(true);window:SetClampedToScreen(true)
 window:EnableMouse(true);window:RegisterForDrag("LeftButton")
@@ -76,12 +76,11 @@ end
 numeric("logscale","Log scale (0.25 - 3)","log scale",-224)
 numeric("toastscale","Toast scale (0.25 - 3)","toast scale",-261)
 numeric("toasttime","Toast seconds (0 < n <= 300)","toast time",-298)
-numeric("minlevel","Minimum recorded level (1 - 60)","log minlevel",-335)
-button("Show / hide movable toast",20,-386,240,function() addon:RunCommand("move") end)
-button("Reset settings / positions",280,-386,230,function() addon:RunCommand("reset") end)
-button("Print command help",20,-427,240,function() addon:RunCommand("help") end)
-button("Close",280,-427,230,function() window:Hide() end)
-label("Log: 20 entries per page, newest first. Minimap: left = settings, right = log.",20,-475)
+button("Show / hide movable toast",20,-346,240,function() addon:RunCommand("move") end)
+button("Reset settings / positions",280,-346,230,function() addon:RunCommand("reset") end)
+button("Print command help",20,-387,240,function() addon:RunCommand("help") end)
+button("Close",280,-387,230,function() window:Hide() end)
+label("Log: 20 entries per page, newest first. Minimap: left = settings, right = log.",20,-435)
 
 function addon:RefreshGUI()
     for key,c in pairs(controls) do c:SetChecked(HCDeaths_Settings[key]) end
