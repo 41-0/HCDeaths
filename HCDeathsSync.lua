@@ -2,11 +2,15 @@
 -- WoW 1.12 / Lua 5.0. No executable serialization or external libraries.
 local addon=HCDeaths_API
 if not addon then return end
-local S={channel="HCDeathsSyncV1",queue={},seen={},offers={},round=0}
+local S={channel="HCDeathsSyncV2",queue={},seen={},offers={},round=0}
 addon.Sync=S
 local fields={"playerName","playerLevel","deathType","killerName","killerLevel",
     "killerClass","location","zone","playerClass","playerRace","playerGuild",
     "killerRace","killerGuild","lastWords","sdate","stime","hcType","realm","faction"}
+local graveFields={"gravePositionKind","graveObservedAt","graveObserver","graveZone","graveSubzone",
+    "graveMap","graveContinent","graveMapZone","graveX","graveY","graveWorld1","graveWorld2","graveWorld3","graveWorld4"}
+local graveKeys={}
+for _,key in ipairs(graveFields) do table.insert(fields,key);graveKeys[key]=true end
 local function known(v) return v~=nil and v~="Unknown" and v~="nil" end
 local function integer(v,lo,hi)
     local n=tonumber(v)
@@ -42,10 +46,43 @@ function S:Eligible(r)
     local realm,faction=self:Context()
     return realm and faction and r.realm==realm and r.faction==faction
 end
+function S:MarkSeen(hash)
+    local cap=tonumber(HCDeaths_Settings.maxrecords) or 0
+    local limit=cap>0 and math.max(256,cap*4) or 0
+    if self.seenLimit~=limit then self.seen={};self.seenRing={};self.seenNext=1;self.seenLimit=limit end
+    if self.seen[hash] then return end
+    if limit>0 then
+        local old=self.seenRing[self.seenNext]
+        if old then self.seen[old]=nil end
+        self.seenRing[self.seenNext]=hash
+        self.seenNext=math.mod(self.seenNext,limit)+1
+    end
+    self.seen[hash]=true
+end
 function S:Remember(r)
     if not self:Eligible(r) then return end
     local data=self:Pack(r)
-    if data then self.seen[self:Fingerprint(data)]=true end
+    if data then self:MarkSeen(self:Fingerprint(data)) end
+end
+function S:ValidGrave(r)
+    if r.gravePositionKind~="observer" or not player(r.graveObserver) or not known(r.graveZone)
+        or not known(r.graveObservedAt) then return false end
+    local _,_,day,clock=string.find(r.graveObservedAt,"^(%d%d%d%d/%d%d/%d%d) (%d%d:%d%d:%d%d)$")
+    if not day or not self:Stamp({sdate=day,stime=clock}) then return false end
+    local hasMap=false;local hasWorld=false
+    if known(r.graveX) or known(r.graveY) then
+        local x,y=tonumber(r.graveX),tonumber(r.graveY)
+        if not x or not y or x~=x or y~=y or x<0 or x>1 or y<0 or y>1 or (x==0 and y==0)
+            or not known(r.graveMap) or not integer(r.graveContinent,1,100) or not integer(r.graveMapZone,1,1000) then return false end
+        hasMap=true
+    end
+    if known(r.graveWorld1) or known(r.graveWorld2) or known(r.graveWorld3) then
+        for _,key in ipairs({"graveWorld1","graveWorld2","graveWorld3"}) do
+            local n=tonumber(r[key]);if not n or n~=n or math.abs(n)>100000000 then return false end
+        end
+        hasWorld=true
+    end
+    return hasMap or hasWorld
 end
 function S:Pack(r)
     local t={}
@@ -72,6 +109,7 @@ function S:Unpack(data)
     end
     if pos~=string.len(data)+1 or not player(r.playerName) or not integer(r.playerLevel,1,60)
         or (r.deathType~="PVE" and r.deathType~="PVP") or not self:Stamp(r) or not self:Eligible(r) then return nil end
+    if known(r.gravePositionKind) and not self:ValidGrave(r) then return nil end
     return r
 end
 function S:Fingerprint(data)
@@ -108,10 +146,15 @@ end
 function S:Merge(dest,src,direct)
     local changed=false
     for _,key in ipairs(fields) do
-        if known(src[key]) and (direct or not known(dest[key])) then
+        if not graveKeys[key] and known(src[key]) and (direct or not known(dest[key])) then
             if dest[key]~=src[key] then changed=true end
             dest[key]=src[key]
         end
+    end
+    -- Never mix X from one visit with Y or map identifiers from another.
+    if not self:ValidGrave(dest) and self:ValidGrave(src) then
+        for _,key in ipairs(graveFields) do dest[key]=known(src[key]) and src[key] or nil end
+        changed=true
     end
     return changed
 end
@@ -124,15 +167,17 @@ end
 function S:Import(r,sender)
     local old=self:Find(r)
     if not self:Eligible(r) then return end
+    if not old and addon.Retention and not addon.Retention:AllowImported(r) then return end
     if old then
         if self:Merge(old,r,false) then old.sharedDetails=true;old.detailsSource=sender end
         self:Remember(old)
         if addon.RefreshToastLastWords then addon:RefreshToastLastWords(old) end
     else r.shared=true;r.sourcePlayer=sender;table.insert(HCDeaths,r);self:Remember(r) end
+    if addon.Retention then addon.Retention:Enforce() end
     addon:updateLog() -- Imported history never enters the toast or /who queues.
 end
 function S:Enqueue(target,kind,body)
-    local msg="HCDS1|"..target.."|"..kind.."|"..body
+    local msg="HCDS2|"..target.."|"..kind.."|"..body
     if string.len(msg)>240 or table.getn(self.queue)>=128 then return false end
     table.insert(self.queue,msg);return true
 end
@@ -145,7 +190,7 @@ end
 function S:Next()
     local p=self.pull
     if not p then return end
-    p.parts=nil;p.received=0
+    p.parts=nil;p.received=0;p.total=nil
     local item=table.remove(p.items,1)
     if item then
         p.wait=item;p.deadline=GetTime()+90
@@ -159,7 +204,7 @@ end
 function S:Receive(message,sender)
     if not HCDeaths_Settings.sync or not player(sender) or sender==UnitName("player") or type(message)~="string"
         or string.len(message)>240 then return end
-    local _,_,target,kind,body=string.find(message,"^HCDS1|([^|]+)|([HOQIGD])|(.*)$")
+    local _,_,target,kind,body=string.find(message,"^HCDS2|([^|]+)|([HOQIGDN])|(.*)$")
     if not target then return end
     local now=GetTime()
     if kind=="O" and self.offer and self.offer.target==target and self.offer.token==body then self.offer=nil end
@@ -184,14 +229,16 @@ function S:Receive(message,sender)
         local grant=self.grant
         if not grant or grant.peer~=sender or grant.token~=token or now>grant.untilTime then return end
         grant.untilTime=now+180
+        local records=grant.records
+        if not records then return end
         if kind=="Q" then
-            if index==0 then index=table.getn(HCDeaths) end
-            if index>table.getn(HCDeaths) then return end
+            if index==0 then index=table.getn(records) end
+            if index>table.getn(records) then return end
             local entries={};local cursor=index;local scanned=0
             while cursor>0 and table.getn(entries)<4 and scanned<50 do
                 scanned=scanned+1
-                local r=HCDeaths[cursor]
-                if r.deathType=="PVE" or r.deathType=="PVP" then
+                local r=records[cursor]
+                if not (addon.Retention and addon.Retention.removed[r]) and (r.deathType=="PVE" or r.deathType=="PVP") then
                     local data=self:Pack(r)
                     if data and self:Eligible(r) and self:Stamp(r) then table.insert(entries,cursor..":"..self:Fingerprint(data)) end
                 end
@@ -199,8 +246,11 @@ function S:Receive(message,sender)
             end
             self:Enqueue(sender,"I",token..","..cursor..","..table.concat(entries,";"))
         else
-            local r=HCDeaths[index]
-            if not r or not self:Eligible(r) or (r.deathType~="PVE" and r.deathType~="PVP") then return end
+            local r=records[index]
+            if not r or (addon.Retention and addon.Retention.removed[r]) then
+                self:Enqueue(sender,"N",token..","..index);return
+            end
+            if not self:Eligible(r) or (r.deathType~="PVE" and r.deathType~="PVP") then return end
             local data=self:Pack(r);if not data then return end
             local hex=string.gsub(data,".",function(c) return string.format("%02X",string.byte(c)) end)
             local total=math.ceil(string.len(hex)/128)
@@ -225,6 +275,10 @@ function S:Receive(message,sender)
         end
         p.requestedCursor=cursor
         self:Next()
+    elseif kind=="N" then
+        local p=self.pull
+        local _,_,token,index=string.find(body,"^(%d+),(%d+)$")
+        if p and p.peer==sender and token==p.token and p.wait and tonumber(index)==p.wait.index then self:Next() end
     elseif kind=="D" then
         local p=self.pull
         local _,_,token,index,part,total,hex=string.find(body,"^(%d+),(%d+),(%d+),(%d+),(%x+)$")
@@ -240,7 +294,7 @@ function S:Receive(message,sender)
             local data=string.gsub(all,"%x%x",function(pair) return string.char(tonumber(pair,16)) end)
             -- Records can be enriched between their inventory and data replies.
             local r=self:Unpack(data)
-            if r then self:Import(r,sender);self.seen[self:Fingerprint(data)]=true end
+            if r then self:Import(r,sender);self:MarkSeen(self:Fingerprint(data)) end
             p.total=nil;self:Next()
         end
     end
@@ -277,9 +331,12 @@ function S:Tick()
     end
     self.joined=true
     if now>=(self.nextClean or 0) then self.rates={};self.rateCount=0;self.nextClean=now+60 end
+    if self.grant and now>self.grant.untilTime then self.grant=nil end
     if self.offer and now>=self.offer.due then
         self:Enqueue(self.offer.target,"O",self.offer.token)
-        self.grant={peer=self.offer.target,token=self.offer.token,untilTime=now+180};self.offer=nil
+        local snapshot={}
+        for i,r in ipairs(HCDeaths) do snapshot[i]=r end
+        self.grant={peer=self.offer.target,token=self.offer.token,untilTime=now+180,records=snapshot};self.offer=nil
     end
     if self.pull and now>self.pull.deadline then self.pull=nil;self.status="Peer timeout; retrying later" end
     if self.discovery and now>=self.discovery.deadline then

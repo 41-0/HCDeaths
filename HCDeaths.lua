@@ -599,6 +599,7 @@ function HCDeath:ReceiveRecord(record)
     if record.deathType == "PVE" or record.deathType == "PVP" then
         if self.Sync then record=self.Sync:StoreLocal(record)
         else table.insert(HCDeaths,record) end
+        if self.Retention then self.Retention:Enforce() end
         pendingLastWords[record.playerName] = record
         HCDeath:updateLog()
     end
@@ -612,6 +613,15 @@ function HCDeath:ReceiveRecord(record)
     HCDeaths_LastWords[record.playerName] = nil
     HCDeath:Toast()
     HCDeath:PumpWho()
+end
+
+-- Drop references held by pending display/lookup work after storage cleanup.
+function HCDeath:OnPrunedRecords(removed)
+    for name,r in pairs(pendingLastWords) do if removed[r] then pendingLastWords[name]=nil end end
+    for i=table.getn(whoQueue),1,-1 do if removed[whoQueue[i].record] then table.remove(whoQueue,i) end end
+    if currentWho and removed[currentWho.record] then currentWho=nil end
+    for i=table.getn(deaths),1,-1 do if removed[deaths[i]] then table.remove(deaths,i) end end
+    if activeToastRecord and removed[activeToastRecord] then HCDeath:hideToast() end
 end
 
 -- Match only deaths received in this session, never historical records on login.
@@ -892,6 +902,7 @@ function HCDeath:reset()
 	HCDeaths_Settings.toasttime = 10
 	HCDeaths_Settings.progress = true
     HCDeaths_Settings.sync = true
+    HCDeaths_Settings.maxrecords = 0
     HCDeaths_Settings.minimapAngle = 220
     HCDeathsLog.page = 1
     if HCDeath.PositionMinimap then HCDeath:PositionMinimap() end
@@ -918,6 +929,15 @@ local function HCDeaths_commands(msg, editbox, silent)
         if HCDeath.ToggleGUI then HCDeath:ToggleGUI() end
         return
     end
+    if msg=="grave status" or msg=="grave check" then
+        if HCDeath.Graves then HCDeath.Graves:Report(msg=="grave check")
+        else HCDeath:print("Grave module not loaded. Install HCDeathsGraves.lua with the full addon folder, then /reload.") end
+        return
+    end
+    if HCDeath.Retention and HCDeath.Retention:Command(msg,silent) then
+        if HCDeath.RefreshGUI then HCDeath:RefreshGUI() end
+        return
+    end
     local toggles = {message=true, log=true, toast=true, progress=true, color=true,
         deathsound=true, levelsound=true, roar=true, sync=true}
     if toggles[msg] then
@@ -940,7 +960,7 @@ local function HCDeaths_commands(msg, editbox, silent)
         local num = tonumber(value)
         if (area == "toast" and (option == "scale" or option == "time"))
             or (area == "log" and option == "scale") then
-            if not num or num ~= num or num <= 0 or num == math.huge
+            if not num or num-num ~= 0 or num <= 0
                 or (option == "scale" and (num < 0.25 or num > 3))
                 or (option == "time" and num > 300) then
                 feedback("Use scale 0.25-3 or toast time greater than 0 and at most 300 seconds.")
@@ -955,6 +975,8 @@ local function HCDeaths_commands(msg, editbox, silent)
             feedback("/hcd - settings GUI; /hcd help - commands")
             feedback("/hcd message | move | log | toast | progress | color | deathsound | levelsound | roar | sync | reset")
             feedback("/hcd log scale number | toast scale number | toast time seconds")
+            feedback("/hcd log max number (0 = unlimited) | prune level number | prune days number | prune keep number")
+            feedback("/hcd grave check | grave status - grave recording diagnostics")
         end
     end
     if HCDeath.RefreshGUI then HCDeath:RefreshGUI() end
@@ -1056,6 +1078,20 @@ do
             if r.sharedDetails then
                 GameTooltip:AddLine("Details supplemented by "..HCDeath:Value(r.detailsSource),0.7,0.7,0.7)
             end
+            if r.gravePositionKind=="observer" then
+                GameTooltip:AddLine("Grave visit: "..HCDeath:Value(r.graveZone).." / "..HCDeath:Value(r.graveSubzone),0.6,0.9,1)
+                local x,y=tonumber(r.graveX),tonumber(r.graveY)
+                if x and y then GameTooltip:AddLine(string.format("Observer map position: %.2f, %.2f",x*100,y*100),0.6,0.9,1)
+                else
+                    local a,b,c=tonumber(r.graveWorld1),tonumber(r.graveWorld2),tonumber(r.graveWorld3)
+                    if a and b and c then
+                        GameTooltip:AddLine(string.format("Observer raw UnitPosition: %.2f, %.2f, %.2f",a,b,c),0.6,0.9,1,true)
+                        GameTooltip:AddLine("Zone map coordinates unavailable; raw position was saved.",0.7,0.7,0.7,true)
+                    end
+                end
+                GameTooltip:AddLine("Observed by "..HCDeath:Value(r.graveObserver).." at "..HCDeath:Value(r.graveObservedAt).." UTC",0.7,0.7,0.7,true)
+                GameTooltip:AddLine("Player position when inspecting the grave; approximate death location.",0.7,0.7,0.7,true)
+            end
             GameTooltip:AddLine("Recorded (UTC): "..HCDeath:LogTimestamp(r),0.7,0.7,0.7)
             GameTooltip:Show()
         end)
@@ -1141,7 +1177,7 @@ HCDeath:SetScript("OnEvent", function()
         HCDeaths_Settings = HCDeaths_Settings or {}
         HCDeaths_Settings.minlevel = nil
         local defaults = {message=true, log=false, toast=true, color=false, deathsound=true,
-            levelsound=true, roar=false, toastscale=1, logscale=1, toasttime=10, progress=true, sync=true}
+            levelsound=true, roar=false, toastscale=1, logscale=1, toasttime=10, progress=true, sync=true, maxrecords=0}
         for key, value in pairs(defaults) do
             if HCDeaths_Settings[key] == nil then HCDeaths_Settings[key] = value end
         end
@@ -1151,6 +1187,7 @@ HCDeath:SetScript("OnEvent", function()
         end
         HCDeaths = HCDeaths or {}
         HCDeaths_LastWords = HCDeaths_LastWords or {}
+        if HCDeath.Retention then HCDeath.Retention:Initialize() end
         if HCDeath.InitializeGUI then HCDeath:InitializeGUI() end
 		HCDeath:Check_pfUI()
 		HCDeath:ToastScale()

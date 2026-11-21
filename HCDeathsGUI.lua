@@ -5,7 +5,7 @@
 local addon=HCDeaths_API
 if not addon then return end
 local window=CreateFrame("Frame","HCDeathsConfig",UIParent)
-window:Hide();window:SetWidth(530);window:SetHeight(495)
+window:Hide();window:SetWidth(530);window:SetHeight(535)
 window:SetPoint("CENTER",UIParent,"CENTER",0,0)
 window:SetFrameStrata("DIALOG");window:SetMovable(true);window:SetClampedToScreen(true)
 window:EnableMouse(true);window:RegisterForDrag("LeftButton")
@@ -52,7 +52,7 @@ syncStatus:SetScript("OnEnter",function()
     GameTooltip:SetOwner(this,"ANCHOR_RIGHT")
     GameTooltip:SetText("Automatic log sharing")
     GameTooltip:AddLine(addon.Sync and addon.Sync.status or "Unavailable",1,1,1)
-    GameTooltip:AddLine("Same-faction users in HCDeathsSyncV1. Best effort; no manual setup.",0.7,0.7,0.7,true)
+    GameTooltip:AddLine("Same-faction users in HCDeathsSyncV2. Best effort; no manual setup.",0.7,0.7,0.7,true)
     GameTooltip:Show()
 end)
 syncStatus:SetScript("OnLeave",function() GameTooltip:Hide() end)
@@ -99,17 +99,20 @@ help:SetScript("OnEnter",function()
     GameTooltip:AddLine("/hcd - Settings",1,1,1)
     GameTooltip:AddLine("/hcd message | move | log | toast | progress",1,1,1)
     GameTooltip:AddLine("/hcd color | deathsound | levelsound | roar | sync | reset",1,1,1)
-    GameTooltip:AddLine("/hcd log scale number",1,1,1)
+    GameTooltip:AddLine("/hcd log scale number | log max number",1,1,1)
+    GameTooltip:AddLine("/hcd prune level number | prune days number | prune keep number",1,1,1)
     GameTooltip:AddLine("/hcd toast scale number | toast time seconds",1,1,1)
     GameTooltip:Show()
 end)
 help:SetScript("OnLeave",function() GameTooltip:Hide() end)
 button("Close",280,-417,230,function() window:Hide() end)
-label("Log: 20 entries per page, newest first. Minimap: left = settings, right = log.",20,-465)
+button("Manage saved logs",20,-465,490,function() addon:ToggleLogManagement() end)
+label("Log: 20 entries per page. Minimap: left = settings, right = log.",20,-505)
 
 function addon:RefreshGUI()
     for key,c in pairs(controls) do c:SetChecked(HCDeaths_Settings[key]) end
     for key,e in pairs(fields) do e:SetText(tostring(HCDeaths_Settings[key])) end
+    if self.RefreshLogManagement then self:RefreshLogManagement() end
 end
 function addon:ToggleGUI()
     if window:IsShown() then window:Hide()
@@ -117,6 +120,79 @@ function addon:ToggleGUI()
 end
 window:SetScript("OnShow",function() addon:RefreshGUI() end)
 table.insert(UISpecialFrames,"HCDeathsConfig")
+
+-- Explicit cleanup controls live in a separate, compact dialog.
+local management=CreateFrame("Frame","HCDeathsLogManagement",UIParent)
+management:Hide();management:SetWidth(530);management:SetHeight(360)
+management:SetPoint("CENTER",UIParent,"CENTER",0,0)
+management:SetFrameStrata("DIALOG");management:SetMovable(true);management:SetClampedToScreen(true)
+management:EnableMouse(true);management:RegisterForDrag("LeftButton")
+management:SetScript("OnDragStart",function() this:StartMoving() end)
+management:SetScript("OnDragStop",function() this:StopMovingOrSizing() end)
+management:SetBackdrop({bgFile="Interface\\Tooltips\\UI-Tooltip-Background",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
+    tile=true,tileSize=16,edgeSize=16,insets={left=4,right=4,top=4,bottom=4}})
+management:SetBackdropColor(0.04,0.04,0.04,0.97)
+local function manageLabel(text,x,y,font)
+    local f=management:CreateFontString(nil,"OVERLAY",font or "GameFontNormal")
+    f:SetPoint("TOPLEFT",management,"TOPLEFT",x,y);f:SetText(text);return f
+end
+manageLabel("Manage saved death logs",20,-18,"GameFontNormalLarge")
+manageLabel("Deletion changes your saved logs immediately.",20,-46,"GameFontHighlightSmall")
+local manageClose=CreateFrame("Button",nil,management,"UIPanelCloseButton")
+manageClose:SetPoint("TOPRIGHT",management,"TOPRIGHT",0,0)
+manageClose:SetScript("OnClick",function() management:Hide() end)
+local status=manageLabel("",20,-278,"GameFontHighlightSmall")
+status:SetWidth(490);status:SetHeight(40);status:SetJustifyH("LEFT")
+local summary=manageLabel("",20,-331,"GameFontHighlightSmall")
+local manageFields={}
+local function manageRow(key,text,y,initial,action,method)
+    manageLabel(text,20,y-5)
+    local box=CreateFrame("Frame",nil,management)
+    box:SetWidth(82);box:SetHeight(24);box:SetPoint("TOPLEFT",management,"TOPLEFT",250,y)
+    box:SetBackdrop({bgFile="Interface\\Buttons\\White8x8",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
+        tile=true,tileSize=8,edgeSize=12,insets={left=3,right=3,top=3,bottom=3}})
+    box:SetBackdropColor(0,0,0,1);box:SetBackdropBorderColor(.65,.65,.65,1)
+    local edit=CreateFrame("EditBox","HCDeathsManageInput_"..key,box)
+    edit:SetWidth(66);edit:SetHeight(20);edit:SetPoint("CENTER",box,"CENTER",0,0)
+    edit:SetFontObject("GameFontHighlightSmall");edit:SetTextColor(1,1,1)
+    edit:SetJustifyH("LEFT");edit:SetTextInsets(0,0,0,0);edit:SetAutoFocus(false);edit:SetMaxLetters(10)
+    edit:SetText(tostring(initial));manageFields[key]=edit
+    local function apply()
+        local r=addon.Retention
+        if not r then return end
+        local count,message=r[method](r,edit:GetText())
+        status:SetText(message or "")
+        if count==nil then status:SetTextColor(1,.3,.3) else status:SetTextColor(1,1,1) end
+        edit:ClearFocus();addon:RefreshLogManagement()
+        if key=="maximum" and count~=nil then edit:SetText(tostring(HCDeaths_Settings.maxrecords or 0)) end
+    end
+    edit:SetScript("OnEscapePressed",function() this:ClearFocus() end)
+    -- Enter applies the persistent cap; destructive cleanup requires its button.
+    if key=="maximum" then edit:SetScript("OnEnterPressed",apply)
+    else edit:SetScript("OnEnterPressed",function() this:ClearFocus() end) end
+    local b=CreateFrame("Button","HCDeathsManageButton_"..key,management,"UIPanelButtonTemplate")
+    b:SetWidth(170);b:SetHeight(25);b:SetPoint("TOPLEFT",management,"TOPLEFT",340,y)
+    b:SetText(action);b:SetScript("OnClick",apply)
+end
+manageRow("maximum","Maximum entries (0 = unlimited)",-80,0,"Apply limit","SetMaximum")
+manageLabel("0 means unlimited. Applying a limit deletes the oldest excess entries.",20,-111,"GameFontHighlightSmall")
+manageRow("level","Delete below level",-148,10,"Delete below level","BelowLevel")
+manageRow("days","Delete older than days",-190,30,"Delete older entries","OlderThan")
+manageRow("keep","Keep newest (0 = delete all)",-232,1000,"Delete excess entries","KeepNewest")
+function addon:RefreshLogManagement()
+    if not addon.Retention then return end
+    local cap=tonumber(HCDeaths_Settings.maxrecords) or 0
+    summary:SetText("Saved deaths: "..addon.Retention:Count().."   Maximum: "..(cap==0 and "unlimited" or tostring(cap)))
+end
+management:SetScript("OnShow",function()
+    manageFields.maximum:SetText(tostring(HCDeaths_Settings.maxrecords or 0))
+    status:SetText("");addon:RefreshLogManagement()
+end)
+function addon:ToggleLogManagement()
+    if management:IsShown() then management:Hide()
+    else manageFields.maximum:SetText(tostring(HCDeaths_Settings.maxrecords or 0));status:SetText("");self:RefreshLogManagement();management:Show() end
+end
+table.insert(UISpecialFrames,"HCDeathsLogManagement")
 
 local minimap=CreateFrame("Button","HCDeathsMinimapButton",Minimap)
 minimap:SetWidth(32);minimap:SetHeight(32);minimap:SetFrameStrata("MEDIUM")

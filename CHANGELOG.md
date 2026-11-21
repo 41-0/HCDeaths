@@ -2,6 +2,37 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.4.2-fork — 2026-11-21
+
+- Fix grave-coordinate capture on Lua 5.0, where `math.huge` is unavailable and negating it raised an error.
+- Remove all dependencies on `math.huge` from addon numeric validation.
+- Add regression coverage with `math.huge` deliberately absent.
+
+## 1.4.1-fork — 2026-11-21
+
+- Improve grave recording retries to cover delayed UI/log availability, and allow completion of uniquely matched unknown levels.
+- Read verified current-zone map coordinates directly; correctly distinguish actually visible maps from shown children of hidden UI parents.
+- Show raw-only observer coordinates in tooltips rather than hiding numeric position data when map coordinates are unavailable.
+- Add `/hcd grave check` and `/hcd grave status`, including missing-module, parsing, no-match, ambiguity, known-field conflict and coordinate/API diagnostics.
+- Save only the latest grave diagnostic snapshot; contain client API errors and replace malformed coordinate bundles atomically.
+
+## 1.4.0-fork — 2026-11-21
+
+- Add a saved-death cap, unlimited by default, enforced on login and both local/shared record intake.
+- Add a log-management dialog for the cap and one-time deletion below a level, older than a number of days, or beyond a desired newest-entry count.
+- Use UTC receipt timestamps for oldest-first cleanup, removing unknown-date entries first for count limits and retaining them for age cleanup.
+- Save compact local cleanup cutoffs to prevent deleted historical entries returning through sharing; future direct death recording remains enabled.
+- Stabilize synchronization inventory references across deletions, skip removed transfers, expire snapshots, and bound fingerprint caches when a cap is enabled.
+- Keep GUI feedback inside its dialog and add equivalent slash commands.
+
+## 1.3.0-fork — 2026-11-21
+
+- Add automatic observations of OctoReplayGraveFrame using the diagnosed name/level/race/class/killer text.
+- Attach observer coordinates only to one unambiguous matching saved death; fill unknown descriptive fields without creating death records.
+- Preserve the original death location/time, label the observation separately, and show observer/map/time details in the log tooltip.
+- Restore hidden-map selection after coordinate reads; retain raw UnitPosition values and skip unavailable positions.
+- Share validated observer-coordinate bundles atomically through protocol/channel V2. All sharing peers must upgrade from 1.2.0.
+
 ## 1.2.0-fork — 2026-11-21
 
 - Add default-on automatic log sharing through a dedicated hidden custom channel, without manual peer selection.
