@@ -2,6 +2,17 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.2.0-fork — 2026-11-21
+
+- Add default-on automatic log sharing through a dedicated hidden custom channel, without manual peer selection.
+- Discover same-realm/faction peers, compare record fingerprints, and transfer unfamiliar record versions in paced, bounded fragments.
+- Merge by name/level/type with compatible killer/location and a five-minute timestamp tolerance; fill only unknown facts and retain direct repeat deaths.
+- Identify shared records and supplemented details in tooltips; import history without sounds, toasts, or lookup requests.
+- Add an automatic-sharing checkbox, hover status, and `/hcd sync`; retain silent GUI operations.
+- Sort the log display by receipt time without rearranging the stored transport indices.
+- Preserve local recording during channel failures; add timeout/retry, size validation, queue limits, and sender rate limits.
+- Mark this as experimental until tested with real Octo clients. Sharing is same-faction, best effort, and unauthenticated.
+
 ## 1.1.2-fork — 2026-11-21
 
 - Silence chat feedback for GUI and minimap operations while preserving slash-command feedback.

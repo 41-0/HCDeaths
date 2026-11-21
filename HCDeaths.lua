@@ -597,7 +597,8 @@ function HCDeath:ReceiveRecord(record)
     end
     record.info = nil
     if record.deathType == "PVE" or record.deathType == "PVP" then
-        table.insert(HCDeaths,record)
+        if self.Sync then record=self.Sync:StoreLocal(record)
+        else table.insert(HCDeaths,record) end
         pendingLastWords[record.playerName] = record
         HCDeath:updateLog()
     end
@@ -614,6 +615,12 @@ function HCDeath:ReceiveRecord(record)
 end
 
 -- Match only deaths received in this session, never historical records on login.
+function HCDeath:RefreshToastLastWords(record)
+    if activeToastRecord==record and HCDeath:Value(record.lastWords)~="Unknown" then
+        HCDeath.lastwords:SetText('"'..record.lastWords..'"')
+    end
+end
+
 function HCDeath:ReceiveLastWords(message)
     local clean = HCDeath:extractLinks(message)
     clean = string.gsub(clean, "|c%x%x%x%x%x%x%x%x", "")
@@ -624,6 +631,7 @@ function HCDeath:ReceiveLastWords(message)
     local record = pendingLastWords[name]
     if record then
         record.lastWords = words
+        if self.Sync then self.Sync:Remember(record) end
         pendingLastWords[name] = nil
         if activeToastRecord == record then
             HCDeath.lastwords:SetText('"'..words..'"')
@@ -660,6 +668,7 @@ function HCDeath:QueryPlayer()
     if HCDeath:Value(r[prefix.."Level"]) == "Unknown" and level then r[prefix.."Level"] = level end
     if not currentWho.killer and zone and zone ~= "" then r.zone = zone end
     currentWho = nil
+    if self.Sync then self.Sync:Remember(r) end
     HCDeath:updateLog()
     HCDeath:PumpWho()
 end
@@ -708,6 +717,10 @@ end
 
 local HookChatFrame_OnEvent = ChatFrame_OnEvent
 function ChatFrame_OnEvent(event)
+    -- A separate frame receives protocol events exactly once. Hide channel traffic
+    -- in every normal chat window, including join/leave notices.
+    if HCDeath.Sync and string.find(event,"^CHAT_MSG_CHANNEL")
+        and HCDeath.Sync:IsChannel(arg9,arg8,arg4) then return end
 	if (event == "CHAT_MSG_SYSTEM") then
 		if testmsg then
 			arg1 = testmsg
@@ -878,6 +891,7 @@ function HCDeath:reset()
 	HCDeaths_Settings.logscale = 1
 	HCDeaths_Settings.toasttime = 10
 	HCDeaths_Settings.progress = true
+    HCDeaths_Settings.sync = true
     HCDeaths_Settings.minimapAngle = 220
     HCDeathsLog.page = 1
     if HCDeath.PositionMinimap then HCDeath:PositionMinimap() end
@@ -905,7 +919,7 @@ local function HCDeaths_commands(msg, editbox, silent)
         return
     end
     local toggles = {message=true, log=true, toast=true, progress=true, color=true,
-        deathsound=true, levelsound=true, roar=true}
+        deathsound=true, levelsound=true, roar=true, sync=true}
     if toggles[msg] then
         HCDeaths_Settings[msg] = not HCDeaths_Settings[msg]
         feedback(msg .. " is " .. (HCDeaths_Settings[msg] and "on" or "off"))
@@ -939,7 +953,7 @@ local function HCDeaths_commands(msg, editbox, silent)
             end
         else
             feedback("/hcd - settings GUI; /hcd help - commands")
-            feedback("/hcd message | move | log | toast | progress | color | deathsound | levelsound | roar | reset")
+            feedback("/hcd message | move | log | toast | progress | color | deathsound | levelsound | roar | sync | reset")
             feedback("/hcd log scale number | toast scale number | toast time seconds")
         end
     end
@@ -1036,6 +1050,12 @@ do
                 GameTooltip:AddLine("Killer class: "..HCDeath:Value(r.killerClass).." / Race: "..HCDeath:Value(r.killerRace),1,1,1)
             end
             GameTooltip:AddLine("Last words: "..HCDeath:Value(r.lastWords),0.7,0.7,0.7,true)
+            if r.shared then
+                GameTooltip:AddLine("Source: shared by "..HCDeath:Value(r.sourcePlayer),0.7,0.7,0.7)
+            else GameTooltip:AddLine("Source: directly received",0.7,0.7,0.7) end
+            if r.sharedDetails then
+                GameTooltip:AddLine("Details supplemented by "..HCDeath:Value(r.detailsSource),0.7,0.7,0.7)
+            end
             GameTooltip:AddLine("Recorded (UTC): "..HCDeath:LogTimestamp(r),0.7,0.7,0.7)
             GameTooltip:Show()
         end)
@@ -1064,6 +1084,17 @@ function HCDeath:updateLog()
         if record and (record.deathType=="PVE" or record.deathType=="PVP") then
             table.insert(entries,record)
         end
+    end
+    if HCDeath.Sync then
+        local order={}
+        for i,r in ipairs(entries) do order[r]=i end
+        table.sort(entries,function(a,b)
+            local x,y=HCDeath.Sync:Stamp(a),HCDeath.Sync:Stamp(b)
+            if x and y and x~=y then return x>y end
+            if x and not y then return true end
+            if y and not x then return false end
+            return order[a]<order[b]
+        end)
     end
     local count=table.getn(entries)
     local pages=math.max(1,math.ceil(count/log.pageSize))
@@ -1110,7 +1141,7 @@ HCDeath:SetScript("OnEvent", function()
         HCDeaths_Settings = HCDeaths_Settings or {}
         HCDeaths_Settings.minlevel = nil
         local defaults = {message=true, log=false, toast=true, color=false, deathsound=true,
-            levelsound=true, roar=false, toastscale=1, logscale=1, toasttime=10, progress=true}
+            levelsound=true, roar=false, toastscale=1, logscale=1, toasttime=10, progress=true, sync=true}
         for key, value in pairs(defaults) do
             if HCDeaths_Settings[key] == nil then HCDeaths_Settings[key] = value end
         end

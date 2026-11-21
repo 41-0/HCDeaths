@@ -15,7 +15,7 @@ This is an independently modified version, not an official GryllsAddons release.
 
 ## What this fork changes
 
-- Adds a settings GUI covering all 13 existing command operations, plus command help on hover.
+- Adds a settings GUI covering the original commands, automatic sharing, and command help on hover.
 - Adds a draggable minimap launcher: left-click for Settings, right-click for the death log.
 - Replaces the latest-50 display with a newest-first log showing **20 entries per page**.
 - Makes every saved PvE/PvP death accessible through page buttons or the mouse wheel. No addon-imposed total record cap is added.
@@ -67,6 +67,7 @@ Settings contains the original command operations: system messages, log visibili
 | `/hcd deathsound` | Toggle death sounds |
 | `/hcd levelsound` | Toggle level-progress sounds |
 | `/hcd roar` | Toggle death roars instead of the raid alert |
+| `/hcd sync` | Toggle automatic log sharing (default on) |
 | `/hcd reset` | Reset settings and positions; preserve deaths |
 
 `/hcdeaths` is an alias for `/hcd`.
@@ -89,6 +90,21 @@ For current messages such as `Hardcore character Witch (level 32) has fallen to 
 
 The current PvE message format above was supplied as a real example. Equivalent natural-cause and PvP formats are supported by parser tests but have not been verified against live messages. Legacy messages remain supported.
 
+## Automatic log sharing (1.2.0, experimental)
+
+Sharing is enabled by default. No player-name entry, grouping, or manual sync command is needed. The addon joins the custom channel **HCDeathsSyncV1**, discovers another compatible user after a randomized startup delay, and periodically reconciles saved PvE/PvP logs. This transport targets **the same realm and faction**. Opposite-faction sharing is not implemented. It requires other users running version 1.2.0 or a compatible protocol version, and a server that permits custom-channel traffic. Actual Octo channel behavior must still be tested in game.
+
+- Discovery repeats approximately every 5–6 minutes when idle. A randomized offer delay suppresses redundant peer responses. Synchronization is eventual, not instantaneous.
+- Peers compare compact record fingerprints, request unfamiliar versions in small pages, and transfer records in bounded fragments. New deaths and later class/race/guild/last-words enrichment become available during subsequent passes.
+- A client sends at most one channel packet every **1.5 seconds**. Large histories can take substantial time. Disconnects or missing packets time out; later passes try again. No complete-history guarantee is made when peers leave before synchronization finishes.
+- The matching rule requires the same name (case insensitive), level, death type, realm/faction when known, UTC receipt times within **5 minutes**, and no conflicting known killer name, killer level, or precise location. `Unknown` values do not prevent matching. This is a heuristic: clocks more than five minutes apart may produce duplicates, and otherwise indistinguishable repeat deaths may be ambiguous. Directly received repeat death notices are saved separately. Ambiguous matches are retained separately rather than silently collapsed.
+- Imported facts only fill unknown fields; known local values are retained. A direct server notice arriving after an imported record upgrades it to a locally received record. Incoming history does not trigger death sounds, toasts, or `/who` lookups. Log display is sorted by recorded UTC time; unknown timestamps are placed last.
+- Tooltips identify imported records and records supplemented by a peer. These are **peer-supplied, unauthenticated data**, not server-certified history. The dedicated channel is not private or encrypted. Shared fields include names, levels, death cause/place, class/race/guild, last words, and receipt timestamps.
+- Existing untagged logs are adopted into the realm/faction of the first sync-enabled login. If an old account-wide log already mixed several realms or factions, those original origins cannot be recovered automatically. New records carry explicit realm/faction tags. Records with invalid/missing timestamps or fields exceeding transport limits remain available locally but are not shared.
+- Normal chat windows hide this channel's protocol traffic and channel notices. Settings has **Automatically share death logs** and a **Sync status (hover)** indicator. Uncheck it (or use `/hcd sync`) to stop sending/receiving and leave the channel. Reset restores sharing to on. Recording local server notices works independently of sharing.
+
+The protocol uses length-prefixed plain data, strict size/type checks, per-sender limits, bounded queues, and no execution of received Lua. The server's channel limits, moderation, or channel availability can prevent sharing; local death recording continues.
+
 ## Last words
 
 Octo's follow-up system notice `Name's last words: "message"` updates that player's latest death received during the current session. The words are stored in `lastWords` and shown in the log tooltip and toast, including a toast already on screen. Queued toasts use the updated record. Without a follow-up notice, the value remains `Unknown`. Ordinary chat is no longer used to guess last words. Unmatched notices and repeated copies do not create death records or modify historical records loaded at login.
@@ -109,7 +125,7 @@ The page browser covers all recorded PvE/PvP deaths. It cannot recover events th
 
 ## Testing and reporting issues
 
-The fork has passed mocked frame/API tests covering startup, default visibility, settings, minimap clicks, more than 100 log entries, pagination, tooltips, reset behavior, and retained visibility. Actual Octo WoW client behavior and visual layout have not yet been verified. Other server environments are unverified as well.
+The fork has passed mocked frame/API tests covering startup, default visibility, settings, minimap clicks, more than 100 log entries, pagination, tooltips, reset behavior, and retained visibility. Two- and multi-client transport simulations additionally cover discovery, missing-field merges, timeouts/recovery, packet limits, source tracking, opt-out, and realm isolation. Actual Octo WoW client behavior, channel transport, and visual layout have not yet been verified. Other server environments are unverified as well.
 
 Please report issues to this fork's repository, rather than asking the original author to support these changes. Include client version, the error text, and reproduction steps. Do not attach account data or personal chat logs unnecessarily.
 
