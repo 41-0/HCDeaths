@@ -55,6 +55,7 @@ syncStatus:SetScript("OnEnter",function()
     if addon.Sync then
         local s=addon.Sync;local c=s.stats or {}
         GameTooltip:AddLine("Channel ID: "..s:ChannelID().." / TX: "..(c.sent or 0).." / RX peers: "..(c.peerPackets or 0).." / own echo: "..(c.echo or 0),1,1,1,true)
+        GameTooltip:AddLine("Send spacing: "..(s.sendInterval or 10).."+ seconds / cooldown: "..math.max(0,math.ceil((s.pauseUntil or 0)-GetTime())).." seconds",.7,.7,.7,true)
         if s.lastError then GameTooltip:AddLine("Error: "..s.lastError,1,.3,.3,true) end
         GameTooltip:AddLine("/hcd sync check, then /hcd sync status",0.7,0.7,0.7)
     end

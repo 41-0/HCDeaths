@@ -2,6 +2,15 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.4.5-fork — 2026-11-21
+
+- Reduce normal sync traffic to one packet every 10–12 seconds initially.
+- Recognize server chat cooldown warnings and channel THROTTLED notices, pause automatically, and adapt spacing up to 60 seconds.
+- Leave a quiet interval after the player's normal chat traffic.
+- Extend no-progress retries and discovery waits to suit slow transmission; freeze active timers during cooldowns and keep active transfer sessions alive.
+- Deduplicate queued packets and avoid retrying requests that have not yet been sent.
+- Show send spacing/cooldown in sync status and GUI hover, and test recovery with a server-enforced speech cooldown.
+
 ## 1.4.4-fork — 2026-11-21
 
 - Recover partial sync transfers by retaining received fragments and requesting only missing fragments after a no-progress interval.

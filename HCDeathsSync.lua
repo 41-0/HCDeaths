@@ -2,7 +2,7 @@
 -- WoW 1.12 / Lua 5.0. No executable serialization or external libraries.
 local addon=HCDeaths_API
 if not addon then return end
-local S={channel="HCDeathsSyncV2",queue={},seen={},offers={},round=0,stats={}}
+local S={channel="HCDeathsSyncV2",queue={},seen={},offers={},round=0,stats={},sendInterval=10}
 addon.Sync=S
 local fields={"playerName","playerLevel","deathType","killerName","killerLevel",
     "killerClass","location","zone","playerClass","playerRace","playerGuild",
@@ -38,6 +38,38 @@ local function decodeEnvelope(message)
     if not string.find("HOQIGDNF",kind,1,true) then return nil end
     return target,kind,body
 end
+function S:BackOff(seconds,reason)
+    local now=GetTime()
+    local untilTime=now+math.max(30,(tonumber(seconds) or 30)+5)
+    local extra=math.max(0,untilTime-math.max(now,self.pauseUntil or 0))
+    self.pauseUntil=math.max(self.pauseUntil or 0,untilTime)
+    self.nextSend=math.max(self.nextSend or 0,self.pauseUntil)
+    self.sendInterval=math.min(60,math.max(10,self.sendInterval or 10)*2)
+    if self.pull then
+        self.pull.retryAt=(self.pull.retryAt or now)+extra
+        self.pull.deadline=(self.pull.deadline or now)+extra
+    end
+    if self.discovery and self.discovery.deadline then self.discovery.deadline=self.discovery.deadline+extra end
+    if self.offer then self.offer.due=self.offer.due+extra end
+    if self.grant then self.grant.untilTime=self.grant.untilTime+extra end
+    self.status="Paused for server chat cooldown";self.wasPaused=true
+    self.lastThrottle=reason;self:Count("throttles");self:SaveStatus()
+end
+function S:HandleThrottle(message)
+    if type(message)~="string" then return false end
+    local text=string.lower(string.gsub(message,"|c%x%x%x%x%x%x%x%x",""))
+    if not string.find(text,"speak",1,true) and not string.find(text,"chat",1,true)
+        and not string.find(text,"message",1,true) then return false end
+    if string.find(text,"too quickly",1,true) or string.find(text,"too fast",1,true) then
+        self:BackOff(60,string.sub(message,1,200));return true
+    end
+    local _,_,seconds=string.find(text,"you must wait%s+(%d+)%s+seconds?")
+    if not seconds and string.find(text,"wait",1,true) and string.find(text,"speak",1,true) then
+        _,_,seconds=string.find(text,"(%d+)%s+seconds?")
+    end
+    if seconds then self:BackOff(seconds,string.sub(message,1,200));return true end
+    return false
+end
 function S:Count(key)
     self.stats[key]=(self.stats[key] or 0)+1
 end
@@ -51,11 +83,12 @@ function S:SaveStatus()
     local stats={}
     for key,value in pairs(self.stats) do stats[key]=value end
     local realm,faction=self:Context()
-    HCDeaths_SyncStatus={version="1.4.4-fork",utc=date("!%Y/%m/%d %H:%M:%S"),
+    HCDeaths_SyncStatus={version="1.4.5-fork",utc=date("!%Y/%m/%d %H:%M:%S"),
         enabled=HCDeaths_Settings.sync and true or false,status=self.status,channel=self.channel,
         channelID=self:ChannelID(),realm=realm,faction=faction,player=UnitName("player"),
         stats=stats,lastError=self.lastError,lastReject=self.lastReject,lastPeer=self.lastPeer,
         lastPacket=self.lastPacket,queue=table.getn(self.queue),
+        sendInterval=self.sendInterval,cooldownSeconds=math.max(0,math.ceil((self.pauseUntil or 0)-GetTime())),lastThrottle=self.lastThrottle,
         peer=self.pull and self.pull.peer,cursor=self.pull and self.pull.cursor,
         waitingIndex=self.pull and self.pull.wait and self.pull.wait.index,
         receivedParts=self.pull and self.pull.received,totalParts=self.pull and self.pull.total,
@@ -69,13 +102,14 @@ function S:Report(check)
     end
     self:SaveStatus()
     local d=HCDeaths_SyncStatus;local c=d.stats
-    addon:print("Sync 1.4.4: "..tostring(d.status).."; enabled="..tostring(d.enabled))
+    addon:print("Sync 1.4.5: "..tostring(d.status).."; enabled="..tostring(d.enabled))
     addon:print("Channel "..d.channel..": id="..d.channelID.."; player="..tostring(d.player).."; realm="..tostring(d.realm).."; faction="..tostring(d.faction))
     addon:print("TX attempted/local OK/errors: "..(c.attempted or 0).."/"..(c.sent or 0).."/"..(c.sendErrors or 0).."; queue="..d.queue)
     addon:print("RX protocol/self echo/peer packets: "..(c.wire or 0).."/"..(c.echo or 0).."/"..(c.peerPackets or 0).."; last peer="..tostring(d.lastPeer or "none"))
     addon:print("Offers/inventory/chunks/decoded/invalid: "..(c.offers or 0).."/"..(c.inventory or 0).."/"..(c.chunks or 0).."/"..(c.decoded or 0).."/"..(c.invalid or 0))
     addon:print("Imported/enriched/filtered: "..(c.imported or 0).."/"..(c.enriched or 0).."/"..(c.filtered or 0))
     addon:print("Retransmissions/timeouts: "..(c.retries or 0).."/"..(c.timeouts or 0).."; waiting record="..tostring(d.waitingIndex or "none").."; parts="..(d.receivedParts or 0).."/"..(d.totalParts or 0))
+    addon:print("Send interval: "..d.sendInterval.."+ seconds; cooldown: "..d.cooldownSeconds.." seconds; server throttles: "..(c.throttles or 0))
     local shareable,total=0,0
     for _,r in ipairs(HCDeaths) do
         if r.deathType=="PVE" or r.deathType=="PVP" then
@@ -247,6 +281,7 @@ end
 function S:Enqueue(target,kind,body)
     local msg="HCDS2:"..target..":"..kind..":"..body
     if string.len(msg)>240 or table.getn(self.queue)>=128 then return false end
+    for _,queued in ipairs(self.queue) do if queued==msg then return true end end
     -- Prioritize handshakes and requests over bulk data fragments.
     if kind~="D" then
         for i,queued in ipairs(self.queue) do
@@ -265,7 +300,7 @@ end
 function S:Next()
     local p=self.pull
     if not p then return end
-    p.parts=nil;p.received=0;p.total=nil;p.retries=0;p.retryAt=GetTime()+25
+    p.parts=nil;p.received=0;p.total=nil;p.retries=0;p.retryAt=GetTime()+90
     local item=table.remove(p.items,1)
     if item then
         p.wait=item;p.deadline=GetTime()+90
@@ -278,10 +313,21 @@ end
 function S:RetryPull(now)
     local p=self.pull
     if not p or now<(p.retryAt or p.deadline) then return end
+    -- A request still waiting for our send slot is not a lost packet.
+    for _,message in ipairs(self.queue) do
+        local target,kind,body=decodeEnvelope(message)
+        if sameName(target,p.peer) then
+            local a,b,token,index=string.find(body,"^(%d+),(%d+)")
+            if (p.wait and kind=="G" and token==p.token and tonumber(index)==p.wait.index)
+                or (not p.wait and kind=="Q" and body==p.token..","..p.cursor) then
+                p.retryAt=now+90;return
+            end
+        end
+    end
     if (p.retries or 0)>=3 then
         self:Count("timeouts");self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Peer timeout after retries; trying later";return
     end
-    p.retries=(p.retries or 0)+1;p.retryAt=now+25;p.deadline=now+90
+    p.retries=(p.retries or 0)+1;p.retryAt=now+90;p.deadline=now+90
     self:Count("retries")
     if p.wait then
         local body=p.token..","..p.wait.index
@@ -426,7 +472,7 @@ function S:Receive(message,sender)
         p.parts=p.parts or {};p.total=total
         if not p.parts[part] then
             p.parts[part]=hex;p.received=p.received+1
-            p.deadline=now+90;p.retryAt=now+25
+            p.deadline=now+90;p.retryAt=now+90
         end
         if p.received==total then
             local all=table.concat(p.parts)
@@ -447,6 +493,10 @@ function S:Tick()
         self.status="Disabled"
         if self.joined and LeaveChannelByName then LeaveChannelByName(self.channel);self.joined=nil end
         return
+    end
+    if now<(self.pauseUntil or 0) then self.status="Paused for server chat cooldown";return end
+    if self.wasPaused then
+        self.wasPaused=nil;self.status=self.pull and "Syncing with "..self.pull.peer or "Resuming after chat cooldown"
     end
     if not JoinChannelByName or not GetChannelName or not SendChatMessage then self.status="Channel API unavailable";return end
     if not self.initialized then
@@ -483,7 +533,7 @@ function S:Tick()
         self.grant={peer=self.offer.target,token=self.offer.token,untilTime=now+600,records=snapshot};self.offer=nil
     end
     self:RetryPull(now)
-    if self.discovery and now>=self.discovery.deadline then
+    if self.discovery and self.discovery.deadline and now>=self.discovery.deadline then
         local d=self.discovery;self.discovery=nil
         if d.peer then
             self.pull={peer=d.peer,token=d.token,cursor=0,items={},deadline=now+90,retries=0,retryAt=now+25}
@@ -494,17 +544,21 @@ function S:Tick()
     if not self.pull and not self.discovery and now>=self.nextHello then
         self.round=self.round+1
         local token=tostring(self.round)..tostring(math.random(10000,99999))
-        self.discovery={token=token,deadline=now+15}
+        self.discovery={token=token}
         self:Enqueue("*","H",token);self.nextHello=now+300+math.random(0,60)
     end
     if table.getn(self.queue)>0 and now>=(self.nextSend or 0) then
         local msg=self.queue[1]
-        self.nextSend=now+3;self:Count("attempted")
+        self.nextSend=now+self.sendInterval+math.random()*2;self:Count("attempted")
         local ok,err=pcall(SendChatMessage,msg,"CHANNEL",nil,id)
-        if ok then self:Count("sent");table.remove(self.queue,1);self.sendFailures=0
+        if ok then
+            self:Count("sent");table.remove(self.queue,1);self.sendFailures=0
+            local target,kind,body=decodeEnvelope(msg)
+            if kind=="H" and self.discovery and self.discovery.token==body then self.discovery.deadline=now+90 end
+            if kind=="D" and self.grant then self.grant.untilTime=math.max(self.grant.untilTime,now+600) end
         else
             self:Count("sendErrors");self.lastError=string.sub(tostring(err),1,300)
-            self.status="Channel send failed";self.nextSend=now+5
+            self.status="Channel send failed";self.nextSend=now+math.max(15,self.sendInterval)
             self.sendFailures=(self.sendFailures or 0)+1
             if self.sendFailures>=3 then table.remove(self.queue,1);self.sendFailures=0 end
             self:SaveStatus()
@@ -525,12 +579,27 @@ S.rates={};S.rateCount=0;S.nextHello=GetTime()+20+math.random(0,30)
 S.status="Starting"
 local frame=CreateFrame("Frame",nil,UIParent)
 S.frame=frame
-frame:RegisterEvent("CHAT_MSG_CHANNEL")
+for _,e in ipairs({"CHAT_MSG_CHANNEL","CHAT_MSG_CHANNEL_NOTICE","CHAT_MSG_SYSTEM","UI_ERROR_MESSAGE",
+    "CHAT_MSG_SAY","CHAT_MSG_YELL","CHAT_MSG_GUILD","CHAT_MSG_OFFICER","CHAT_MSG_PARTY",
+    "CHAT_MSG_RAID","CHAT_MSG_RAID_LEADER","CHAT_MSG_WHISPER_INFORM"}) do frame:RegisterEvent(e) end
 frame:SetScript("OnEvent",function()
-    if S:IsChannel(arg9,arg8,arg4) then
-        local ok,err=pcall(S.Receive,S,arg1,arg2)
-        if not ok then S:Count("runtimeErrors");S.lastError=string.sub(tostring(err),1,300);S.status="Sync receive error";S:SaveStatus() end
+    local function receiveEvent()
+        if not addon.loaded or not HCDeaths_Settings.sync then return end
+        if event=="CHAT_MSG_SYSTEM" or event=="UI_ERROR_MESSAGE" then S:HandleThrottle(arg1);return end
+        local channel=S:IsChannel(arg9,arg8,arg4)
+        if event=="CHAT_MSG_CHANNEL_NOTICE" then
+            if channel and arg1=="THROTTLED" then S:BackOff(60,"Channel THROTTLED notice") end
+            return
+        end
+        if event=="CHAT_MSG_CHANNEL" and channel then S:Receive(arg1,arg2);return end
+        -- Leave quiet time for the player's normal speech and other ordinary-chat
+        -- traffic sent by that player. Never replace/hook the global send API.
+        if event=="CHAT_MSG_WHISPER_INFORM" or sameName(arg2,UnitName("player")) then
+            S.nextSend=math.max(S.nextSend or 0,GetTime()+10)
+        end
     end
+    local ok,err=pcall(receiveEvent)
+    if not ok then S:Count("runtimeErrors");S.lastError=string.sub(tostring(err),1,300);S.status="Sync receive error";S:SaveStatus() end
 end)
 local elapsed=0
 frame:SetScript("OnUpdate",function()
