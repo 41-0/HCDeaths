@@ -895,7 +895,10 @@ function HCDeath:print(message)
 	DEFAULT_CHAT_FRAME:AddMessage("HCDeaths: "..message, 1, .5, 0)
 end
 
-local function HCDeaths_commands(msg, editbox)
+local function HCDeaths_commands(msg, editbox, silent)
+    local function feedback(message)
+        if not silent then HCDeath:print(message) end
+    end
     msg = string.lower((string.gsub(msg or "", "^%s*(.-)%s*$", "%1")))
     if msg == "" or msg == "gui" or msg == "config" then
         if HCDeath.ToggleGUI then HCDeath:ToggleGUI() end
@@ -905,7 +908,7 @@ local function HCDeaths_commands(msg, editbox)
         deathsound=true, levelsound=true, roar=true}
     if toggles[msg] then
         HCDeaths_Settings[msg] = not HCDeaths_Settings[msg]
-        HCDeath:print(msg .. " is " .. (HCDeaths_Settings[msg] and "on" or "off"))
+        feedback(msg .. " is " .. (HCDeaths_Settings[msg] and "on" or "off"))
         if msg == "log" then HCDeath:ToggleLog() end
     elseif msg == "move" then
         if toastMove then
@@ -917,7 +920,7 @@ local function HCDeaths_commands(msg, editbox)
         end
     elseif msg == "reset" then
         HCDeath:reset()
-        HCDeath:print("settings reset (saved deaths retained)")
+        feedback("settings reset (saved deaths retained)")
     else
         local _, _, area, option, value = string.find(msg, "^(%a+)%s+(%a+)%s+(%S+)$")
         local num = tonumber(value)
@@ -926,25 +929,25 @@ local function HCDeaths_commands(msg, editbox)
             if not num or num ~= num or num <= 0 or num == math.huge
                 or (option == "scale" and (num < 0.25 or num > 3))
                 or (option == "time" and num > 300) then
-                HCDeath:print("Use scale 0.25-3 or toast time greater than 0 and at most 300 seconds.")
+                feedback("Use scale 0.25-3 or toast time greater than 0 and at most 300 seconds.")
             else
                 HCDeaths_Settings[area .. option] = num
                 if option == "scale" then
                     if area == "toast" then HCDeath:ToastScale() else HCDeath:LogScale() end
                 end
-                HCDeath:print(area .. " " .. option .. " set to " .. num)
+                feedback(area .. " " .. option .. " set to " .. num)
             end
         else
-            HCDeath:print("/hcd - settings GUI; /hcd help - commands")
-            HCDeath:print("/hcd message | move | log | toast | progress | color | deathsound | levelsound | roar | reset")
-            HCDeath:print("/hcd log scale number | toast scale number | toast time seconds")
+            feedback("/hcd - settings GUI; /hcd help - commands")
+            feedback("/hcd message | move | log | toast | progress | color | deathsound | levelsound | roar | reset")
+            feedback("/hcd log scale number | toast scale number | toast time seconds")
         end
     end
     if HCDeath.RefreshGUI then HCDeath:RefreshGUI() end
 end
 
-function HCDeath:RunCommand(command)
-    HCDeaths_commands(command)
+function HCDeath:RunCommand(command, silent)
+    HCDeaths_commands(command, nil, silent)
 end
 
 -- Existing records store UTC receipt date/time, not the victim's local time.
@@ -1115,3 +1118,31 @@ HCDeath:SetScript("OnEvent", function()
             HCDeaths_Settings.log = false
             HCDeaths_Settings.pagedLogVersion = 1
         end
+        HCDeaths = HCDeaths or {}
+        HCDeaths_LastWords = HCDeaths_LastWords or {}
+        if HCDeath.InitializeGUI then HCDeath:InitializeGUI() end
+		HCDeath:Check_pfUI()
+		HCDeath:ToastScale()
+		HCDeath:ToggleLog()			
+		HCDeath:print("HCDeaths Loaded! /hcdeaths or /hcd")
+	end
+end)
+
+function HCDeath:toastMove()
+	HCDeath.level:SetText("60")
+	HCDeath.name:SetText("Toast")
+	HCDeath.guild:SetText("<HCDeaths>")
+	HCDeath.location:SetText("Has died in Blackrock Mountains")
+	HCDeath.death:SetText("to Torta level 60")
+	HCDeath.lastwords:SetText('"'.."I like turtles!"..'"')
+	-- HCDeath.quote:SetText("May this sacrifice not be forgotten!")
+	
+	HCDeath:color(60)
+	HCDeath.texture:SetVertexColor(.75,.75,.75)	
+	HCDeath.class:SetTexture(media.."Ring\\".."Warrior")
+	HCDeath.race:SetTexture(media.."Ring\\".."Human")
+	HCDeath:classSize()
+	HCDeath:raceSize()
+	HCDeathsToast:Show()
+end
+

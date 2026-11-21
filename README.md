@@ -15,7 +15,7 @@ This is an independently modified version, not an official GryllsAddons release.
 
 ## What this fork changes
 
-- Adds a settings GUI covering all 13 existing command operations, plus a help button.
+- Adds a settings GUI covering all 13 existing command operations, plus command help on hover.
 - Adds a draggable minimap launcher: left-click for Settings, right-click for the death log.
 - Replaces the latest-50 display with a newest-first log showing **20 entries per page**.
 - Makes every saved PvE/PvP death accessible through page buttons or the mouse wheel. No addon-imposed total record cap is added.
@@ -38,6 +38,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the fork's release notes.
 ## GUI and controls
 
 Open Settings using `/hcd`, `/hcdeaths`, `/hcd gui`, or the minimap icon's left-click.
+
+GUI and minimap operations do not print chat feedback. Command help appears on hover; direct slash commands retain their chat feedback.
 
 Settings contains the original command operations: system messages, log visibility, toasts, level progress, ring colors, death sounds, level sounds, roar selection, log scale, toast scale, toast duration, movable-toast preview, and Reset.
 
@@ -116,3 +118,7 @@ Please report issues to this fork's repository, rather than asking the original 
 Distributed under the **MIT License**; see [LICENSE](LICENSE). The original copyright notice is retained unchanged:
 
 ```text
+Copyright (c) 2023 GryllsAddons
+```
+
+The fork's changes are also distributed under the MIT License. Keep the original copyright and complete license text when redistributing this addon. The original software is provided without warranty, as stated in LICENSE.
