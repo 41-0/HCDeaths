@@ -35,7 +35,7 @@ local function decodeEnvelope(message)
     end
     if not target then return nil end
     kind=string.upper(kind)
-    if not string.find("HOQIGDNFVBTRAE",kind,1,true) then return nil end
+    if not string.find("HOQIGDNFVBTRAEWP",kind,1,true) then return nil end
     return target,kind,body
 end
 function S:BackOff(seconds,reason)
@@ -49,6 +49,7 @@ function S:BackOff(seconds,reason)
         self.pull.retryAt=(self.pull.retryAt or now)+extra
         self.pull.deadline=(self.pull.deadline or now)+extra
     end
+    if self.manualRequest then self.manualRequest.expires=self.manualRequest.expires+extra;self.manualRequest.retryAt=self.manualRequest.retryAt+extra end
     if self.discovery and self.discovery.deadline then self.discovery.deadline=self.discovery.deadline+extra end
     if self.offer then self.offer.due=self.offer.due+extra end
     if self.grant then self.grant.untilTime=self.grant.untilTime+extra end
@@ -157,12 +158,14 @@ function S:SaveStatus()
     local stats={}
     for key,value in pairs(self.stats) do stats[key]=value end
     local realm,faction=self:Context()
-    HCDeaths_SyncStatus={version="1.5.0-fork",utc=date("!%Y/%m/%d %H:%M:%S"),
+    HCDeaths_SyncStatus={version="1.5.4-fork",utc=date("!%Y/%m/%d %H:%M:%S"),
         enabled=HCDeaths_Settings.sync and true or false,status=self.status,channel=self.channel,
         channelID=self:ChannelID(),realm=realm,faction=faction,player=UnitName("player"),
         stats=stats,lastError=self.lastError,lastReject=self.lastReject,lastPeer=self.lastPeer,
         lastPacket=self.lastPacket,queue=table.getn(self.queue),
         sendInterval=self.sendInterval,cooldownSeconds=math.max(0,math.ceil((self.pauseUntil or 0)-GetTime())),lastThrottle=self.lastThrottle,
+        uiError=self.lastUIError,pendingApprovals=table.getn(self.requests),
+        manualRequestPeer=self.manualRequest and self.manualRequest.peer,manualRequestPhase=self.manualRequest and self.manualRequest.phase,
         peer=self.pull and self.pull.peer,cursor=self.pull and self.pull.cursor,
         waitingIndex=self.pull and self.pull.wait and self.pull.wait.index,
         receivedParts=self.pull and self.pull.received,totalParts=self.pull and self.pull.total,
@@ -176,7 +179,7 @@ function S:Report(check)
     end
     self:SaveStatus()
     local d=HCDeaths_SyncStatus;local c=d.stats
-    addon:print("Sync 1.5.0: "..tostring(d.status).."; enabled="..tostring(d.enabled))
+    addon:print("Sync 1.5.4: "..tostring(d.status).."; enabled="..tostring(d.enabled))
     addon:print("Channel "..d.channel..": id="..d.channelID.."; player="..tostring(d.player).."; realm="..tostring(d.realm).."; faction="..tostring(d.faction))
     addon:print("TX attempted/local OK/errors: "..(c.attempted or 0).."/"..(c.sent or 0).."/"..(c.sendErrors or 0).."; queue="..d.queue)
     addon:print("RX protocol/self echo/peer packets: "..(c.wire or 0).."/"..(c.echo or 0).."/"..(c.peerPackets or 0).."; last peer="..tostring(d.lastPeer or "none"))
@@ -185,6 +188,8 @@ function S:Report(check)
     addon:print("Retransmissions/timeouts: "..(c.retries or 0).."/"..(c.timeouts or 0).."; waiting record="..tostring(d.waitingIndex or "none").."; parts="..(d.receivedParts or 0).."/"..(d.totalParts or 0))
     addon:print("Send interval: "..d.sendInterval.."+ seconds; cooldown: "..d.cooldownSeconds.." seconds; server throttles: "..(c.throttles or 0))
     addon:print("Compact records received: "..(c.compactRecords or 0).."; peer compact format: "..tostring(self.lastPeer and self.capabilities[string.lower(self.lastPeer)] or "not negotiated"))
+    addon:print("Approvals pending: "..d.pendingApprovals.."; request: "..tostring(d.manualRequestPeer or "none").."; phase: "..tostring(d.manualRequestPhase or "none"))
+    if d.uiError then addon:print("Approval/status UI error: "..d.uiError) end
     local shareable,total=0,0
     for _,r in ipairs(HCDeaths) do
         if r.deathType=="PVE" or r.deathType=="PVP" then
@@ -238,6 +243,7 @@ function S:MarkSeen(hash)
 end
 function S:Remember(r)
     if not self:Eligible(r) then return end
+    self:ReconcileUnknown(r)
     local data=self:Pack(r)
     if data then self:MarkSeen(self:Fingerprint(data)) end
 end
@@ -296,6 +302,75 @@ function S:Fingerprint(data)
         a=math.mod(a*131+c,2147483647);b=math.mod(b*137+c,2147483629)
     end
     return string.len(data)..":"..string.format("%.0f:%.0f",a,b)
+end
+-- Grave observations never supply a death time. Compare shared semantic facts,
+-- not visit timestamps, observer coordinates or /who's differently scoped zone.
+local reconcileFields={"playerName","playerLevel","playerClass","playerRace","playerGuild",
+    "killerName","killerLevel","killerClass","killerRace","killerGuild","lastWords","location","realm","faction","hcType"}
+local numericIdentity={playerLevel=true,killerLevel=true}
+function S:UnknownMatches(observation,dated)
+    if not observation.deathTimeUnknown or (dated.deathType~="PVE" and dated.deathType~="PVP") then return false end
+    if string.lower(observation.playerName or "")~=string.lower(dated.playerName or "")
+        or tonumber(observation.playerLevel)~=tonumber(dated.playerLevel) then return false end
+    local realm,faction=self:Context()
+    local function value(record,key)
+        local v=record[key]
+        if record==dated and not known(v) then
+            if key=="realm" then return realm elseif key=="faction" then return faction end
+        end
+        return v
+    end
+    for _,key in ipairs({"playerName","playerLevel","killerName","killerLevel","realm","faction"}) do
+        if not known(value(observation,key)) or not known(value(dated,key)) or value(observation,key)=="" or value(dated,key)=="" then return false end
+    end
+    for _,key in ipairs(reconcileFields) do
+        local a,b=value(observation,key),value(dated,key)
+        if known(a) and known(b) then
+            if numericIdentity[key] then
+                if not tonumber(a) or tonumber(a)~=tonumber(b) then return false end
+            elseif key=="lastWords" then
+                if tostring(a)~=tostring(b) then return false end
+            elseif string.lower(tostring(a))~=string.lower(tostring(b)) then return false end
+        end
+    end
+    if not self:Stamp(dated) then return false end
+    if observation.deathType~="UNKNOWN" and known(observation.deathType) and observation.deathType~=dated.deathType then return false end
+    -- A grave cannot belong to a later death. Receipt-time clock differences can
+    -- conservatively leave an observation separate rather than guess a match.
+    local _,_,day,clock=string.find(observation.firstInspectedAt or "","^(%d%d%d%d/%d%d/%d%d) (%d%d:%d%d:%d%d)$")
+    local inspected=day and self:Stamp({sdate=day,stime=clock})
+    if inspected and self:Stamp(dated)>inspected then return false end
+    return true
+end
+function S:ReconcileUnknown(dated)
+    if not HCDeaths_UnknownDeaths or table.getn(HCDeaths_UnknownDeaths)==0 or not self:Stamp(dated) then return false end
+    local found,index
+    for i,r in ipairs(HCDeaths_UnknownDeaths) do
+        if self:UnknownMatches(r,dated) then
+            if found then return false end
+            found=r;index=i
+        end
+    end
+    if not found then return false end
+    local candidate,count=nil,0
+    for _,r in ipairs(HCDeaths) do
+        if self:UnknownMatches(found,r) then candidate=r;count=count+1 end
+    end
+    if count~=1 or candidate~=dated then return false end
+    -- Preserve data before deleting the unknown-date observation.
+    self:Merge(dated,found,false)
+    if found.firstInspectedAt and (not dated.firstInspectedAt or found.firstInspectedAt<dated.firstInspectedAt) then dated.firstInspectedAt=found.firstInspectedAt end
+    if found.lastInspectedAt and (not dated.lastInspectedAt or found.lastInspectedAt>dated.lastInspectedAt) then dated.lastInspectedAt=found.lastInspectedAt end
+    dated.reconciledGrave=true
+    table.remove(HCDeaths_UnknownDeaths,index)
+    self:Count("reconciledGraves")
+    return true
+end
+function S:ReconcileSavedGraves()
+    if not HCDeaths_UnknownDeaths or table.getn(HCDeaths_UnknownDeaths)==0 then return end
+    for _,r in ipairs(HCDeaths) do
+        if self:ReconcileUnknown(r) then self:Remember(r) end
+    end
 end
 function S:Match(a,b)
     if string.lower(a.playerName or "")~=string.lower(b.playerName or "")
@@ -383,7 +458,7 @@ function S:Next()
     elseif p.cursor>0 then
         p.wait=nil;p.deadline=GetTime()+90
         self:Enqueue(p.peer,"Q",p.token..","..p.cursor)
-    else if p.digest then self.peerDigests[string.lower(p.peer)]=p.digest end;self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Up to date with "..p.peer end
+    else self.lastTransfer={peer=p.peer,reviewed=p.reviewed or 0,downloaded=p.downloaded or 0,completed=true};if p.full then self:HistoryFeedback("Full history completed with "..p.peer..". Downloaded "..(p.downloaded or 0).." entries.","success") end;if p.digest then self.peerDigests[string.lower(p.peer)]=p.digest end;self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Up to date with "..p.peer end
 end
 function S:RetryPull(now)
     local p=self.pull
@@ -400,7 +475,7 @@ function S:RetryPull(now)
         end
     end
     if (p.retries or 0)>=3 then
-        self:Count("timeouts");self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Peer timeout after retries; trying later";return
+        self:Count("timeouts");self:Enqueue(p.peer,"F",p.token);self.pull=nil;self.status="Peer timeout after retries; trying later";if p.full then self:HistoryFeedback("Transfer stopped: the sender did not respond after retries. Entries already received are saved. Try again later.","error") end;return
     end
     p.retries=(p.retries or 0)+1;p.retryAt=now+90;p.deadline=now+90
     self:Count("retries")
@@ -457,12 +532,19 @@ function S:Receive(message,sender)
     elseif (kind=="O" or kind=="T") and self.discovery and (kind=="T" and summaryToken or body)==self.discovery.token then
         self:Count("offers")
         if not self.discovery.peer then self.discovery.peer=sender;self.discovery.digest=kind=="T" and summaryDigest or nil;self.discovery.deadline=now end
+    elseif kind=="W" then
+        local r=self.manualRequest
+        if r and sameName(r.peer,sender) and r.token==body then r.acknowledged=true;r.phase="Delivered; waiting for sender approval";r.retryAt=now+120 end
+    elseif kind=="P" then
+        local _,_,token,count=string.find(body,"^(%d+),(%d+)$")
+        local p=self.pull
+        if p and sameName(p.peer,sender) and p.token==token then p.totalRecords=integer(count,0,1000000000) end
     elseif kind=="R" or kind=="A" or kind=="E" then
         self:ManualReceive(kind,body,sender,now)
     elseif kind=="F" then
         self:DropPending(sender,body)
-        if self.manualRequest and sameName(self.manualRequest.peer,sender) and self.manualRequest.token==body then self.manualRequest=nil;self.manualStatus="Request cancelled" end
-        if self.pull and self.pull.full and sameName(self.pull.peer,sender) and self.pull.token==body then self.pull=nil;self.manualStatus="Transfer cancelled by sender" end
+        if self.manualRequest and sameName(self.manualRequest.peer,sender) and self.manualRequest.token==body then self.manualRequest=nil;self:HistoryFeedback("Request cancelled by the sender.","warning") end
+        if self.pull and self.pull.full and sameName(self.pull.peer,sender) and self.pull.token==body then self.pull=nil;self:HistoryFeedback("Full-history transfer cancelled by the sender.","warning") end
         if self.grant and sameName(self.grant.peer,sender) and self.grant.token==body then
             self.grant=nil
             for i=table.getn(self.queue),1,-1 do
@@ -525,7 +607,7 @@ function S:Receive(message,sender)
                 end
                 cache={index=index,wire=encoded,size=size,kind=kind,total=math.ceil(string.len(encoded)/size)}
                 if cache.total>64 then return end
-                grant.dataCache=cache
+                grant.dataCache=cache;grant.served=(grant.served or 0)+1
             end
             for part=1,cache.total do
                 local wanted=not missing
@@ -551,16 +633,20 @@ function S:Receive(message,sender)
         if not p or not sameName(p.peer,sender) or token~=p.token or not cursor or p.wait then return end
         if p.requestedCursor and p.requestedCursor>0 and cursor>=p.requestedCursor then return end
         self:Count("inventory")
-        p.cursor=cursor;p.items={}
+        p.cursor=cursor;p.items={};p.totalRecords=p.totalRecords or cursor
         local count=0
         for item in string.gfind(entries,"[^;]+") do
             local _,_,index,hash=string.find(item,"^(%d+):(%d+:%d+:%d+)$")
             index=integer(index,1,1000000000);count=count+1
             if count>(self.capabilities[string.lower(sender)]=="C2" and 6 or 4) or not index or not hash then self.pull=nil;return end
+            p.totalRecords=math.max(p.totalRecords or 0,index)
             p.reviewed=(p.reviewed or 0)+1
             if (p.full or p.reviewed<=100) and not self.seen[hash] then table.insert(p.items,{index=index,hash=hash}) end
         end
-        if not p.full and (p.reviewed or 0)>=100 then p.cursor=0 end
+        if not p.full then
+            p.totalRecords=math.min(100,p.totalRecords or 100)
+            if (p.reviewed or 0)>=100 then p.cursor=0;p.reviewed=100 end
+        end
         p.requestedCursor=cursor
         self:Next()
     elseif kind=="N" then
@@ -593,7 +679,7 @@ function S:Receive(message,sender)
             else r,reason=self:Unpack(data) end
             if r then
                 self:Count("decoded");if kind=="B" then self:Count("compactRecords") end
-                self:Import(r,sender);if p.wait.hash then self:MarkSeen(p.wait.hash) end
+                p.downloaded=(p.downloaded or 0)+1;self:Import(r,sender);if p.wait.hash then self:MarkSeen(p.wait.hash) end
                 local full=self:Pack(r);if full then self:MarkSeen(self:Fingerprint(full)) end
             else p.digest=nil;self:Count("invalid");self.lastReject=reason or "Invalid record data" end
             p.total=nil;self:Next()
@@ -627,34 +713,74 @@ function S:DropPending(peer,token)
         if sameName(peer,r.peer) and token==r.token then table.remove(self.requests,i) end
     end
 end
+function S:InCombat()
+    if not UnitAffectingCombat then return false end
+    local value=UnitAffectingCombat("player")
+    return value==true or value==1 or value=="1"
+end
+function S:HistoryFeedback(message,kind)
+    self.manualStatus=message
+    self.historyFeedback={message=message,kind=kind or "info"}
+end
 function S:RequestHistory(peer)
-    if not HCDeaths_Settings.sync then self.manualStatus="Enable log sharing first";return false end
-    if not player(peer) or sameName(peer,UnitName("player")) then self.manualStatus="Enter another player's name";return false end
-    if self.capabilities[string.lower(peer)]~="C2" then self.manualStatus="Wait for discovery; both players need version 1.5.0+";return false end
-    if self.pull or self.discovery or self.manualRequest then self.manualStatus="A request or synchronization is already active";return false end
-    if GetTime()<(self.nextManual or 0) then self.manualStatus="Please wait before requesting again";return false end
+    local function fail(reason)
+        self:HistoryFeedback("Request not sent: "..reason,"error");return false
+    end
+    if not HCDeaths_Settings.sync then return fail("Enable log sharing first.") end
+    if type(peer)=="string" then peer=string.gsub(peer,"^%s*(.-)%s*$","%1") end
+    if not player(peer) or sameName(peer,UnitName("player")) then return fail("Enter another player's character name.") end
+    if self.manualRequest or (self.pull and self.pull.full) then return fail("A full-history request or transfer is already active. You can keep playing.") end
+    if GetTime()<(self.nextManual or 0) then
+        return fail("Please wait "..math.ceil(self.nextManual-GetTime()).." seconds before requesting again.")
+    end
+    if not SendChatMessage or not JoinChannelByName or not GetChannelName then return fail("Chat channel API is unavailable.") end
+    if table.getn(self.queue)>124 then return fail("The send queue is full. Please try again later.") end
+    if self.pull then self:Enqueue(self.pull.peer,"F",self.pull.token);self.pull=nil end
+    if self.discovery then
+        local token=self.discovery.token
+        for i=table.getn(self.queue),1,-1 do
+            local target,kind,body=decodeEnvelope(self.queue[i])
+            if kind=="H" and body==token then table.remove(self.queue,i) end
+        end
+        self.discovery=nil
+    end
     self.round=self.round+1
     local token=tostring(self.round)..tostring(math.random(10000,99999))
-    self.manualRequest={peer=peer,token=token,expires=GetTime()+600}
+    self:Advertise(peer)
+    if not self:Enqueue(peer,"R",token) then return fail("Could not queue the request. Please try again later.") end
+    self.manualRequest={peer=peer,token=token,expires=GetTime()+600,retries=0,retryAt=GetTime()+90,phase="Queued; waiting for a send slot"}
     self.nextManual=GetTime()+300
-    self:Enqueue(peer,"R",token);self.manualStatus="Waiting for approval from "..peer
+    self:HistoryFeedback("Request queued for "..peer..". Delivery and approval may take several minutes. You can close this window and keep playing; the request continues in the background.","info")
     return true
 end
 function S:ManualReceive(kind,token,peer,now)
     if not string.find(token,"^%d+$") or string.len(token)>12 then return end
     if kind=="R" then
         local key=string.lower(peer)
-        if self.capabilities[key]~="C2" then return end
-        for _,r in ipairs(self.requests) do if sameName(r.peer,peer) then return end end
-        if now<(self.requestTimes[key] or 0) or table.getn(self.requests)>=5 then return end
+        -- The dedicated R action is itself a feature probe. A lost capability
+        -- advertisement must not silently discard an explicit consent request.
+        if self.grant and self.grant.full and sameName(self.grant.peer,peer) and self.grant.token==token then
+            self:Enqueue(peer,"A",token);return
+        end
+        for _,r in ipairs(self.requests) do
+            if sameName(r.peer,peer) then
+                if r.token==token then self:Enqueue(peer,"W",token) end
+                return
+            end
+        end
+        if now<(self.requestTimes[key] or 0) or table.getn(self.requests)>=5 then self:Enqueue(peer,"E",token);return end
+        local tracked=0;for name in pairs(self.requestTimes) do tracked=tracked+1 end
+        if not self.requestTimes[key] and tracked>=64 then self:Enqueue(peer,"E",token);return end
         self.requestTimes[key]=now+300
         table.insert(self.requests,{peer=peer,token=token,expires=now+600})
+        self:Enqueue(peer,"W",token)
+        if self.RefreshHistoryUI then self:RefreshHistoryUI() end
     elseif self.manualRequest and sameName(peer,self.manualRequest.peer) and token==self.manualRequest.token then
         if kind=="A" and now<=self.manualRequest.expires then
             self.pull={peer=peer,token=token,full=true,cursor=0,items={},deadline=now+90,retryAt=now+90,retries=0}
             self:Enqueue(peer,"Q",token..",0");self.status="Receiving full history from "..peer
-            self.manualStatus=self.status
-        else self.manualStatus="Request declined or expired" end
+            self:HistoryFeedback("Approved by "..peer..". Receiving history in the background; you can keep playing.","success")
+        else self:HistoryFeedback("Request unsuccessful: the sender declined, was unavailable, or the request expired.","error") end
         self.manualRequest=nil
     end
 end
@@ -662,12 +788,20 @@ function S:DecideHistory(allow)
     local r=self.requests[1]
     if not r then return end
     if allow then
-        if UnitAffectingCombat and UnitAffectingCombat("player") then return end
+        if self:InCombat() then return end
         if not HCDeaths_Settings.sync or GetTime()>r.expires then return end
-        if self.grant then self.manualStatus="Currently sending; approve after the transfer ends";return end
+        if self.grant and self.grant.full then self.manualStatus="Currently sending full history; please wait";return end
+        if self.grant then
+            local old=self.grant
+            for i=table.getn(self.queue),1,-1 do
+                local target,kind,body=decodeEnvelope(self.queue[i])
+                if sameName(target,old.peer) and (body==old.token or string.sub(body,1,string.len(old.token)+1)==old.token..",") then table.remove(self.queue,i) end
+            end
+            self:Enqueue(old.peer,"F",old.token);self.grant=nil
+        end
         local records=self:Snapshot(true)
         self.grant={peer=r.peer,token=r.token,records=records,full=true,untilTime=GetTime()+600}
-        self:Enqueue(r.peer,"A",r.token)
+        self:Enqueue(r.peer,"A",r.token);self:Enqueue(r.peer,"P",r.token..","..table.getn(records))
     else self:Enqueue(r.peer,"E",r.token) end
     table.remove(self.requests,1)
 end
@@ -682,18 +816,55 @@ function S:CancelHistory()
         if self.manualRequest==r then self.manualRequest=nil end
         if self.pull==r then self.pull=nil end
         if self.grant==r then self.grant=nil end
-        self.manualStatus="Full history transfer cancelled"
+        self:HistoryFeedback("Full-history request or transfer cancelled.","warning")
     end
 end
 function S:ManualTick(now)
+    for peer,expires in pairs(self.requestTimes) do if now>expires then self.requestTimes[peer]=nil end end
     for i=table.getn(self.requests),1,-1 do
         local r=self.requests[i]
         if now>r.expires then self:Enqueue(r.peer,"E",r.token);table.remove(self.requests,i) end
     end
-    if self.manualRequest and now>self.manualRequest.expires then
-        self:CancelHistory();self.manualStatus="Approval request expired"
+    local request=self.manualRequest
+    if request and now>=(request.retryAt or 0) and now<request.expires then
+        local queued=false
+        for _,msg in ipairs(self.queue) do
+            local target,kind,body=decodeEnvelope(msg)
+            if kind=="R" and body==request.token and sameName(target,request.peer) then queued=true end
+        end
+        if not queued and request.retries<3 then
+            request.retries=request.retries+1;self:Enqueue(request.peer,"R",request.token)
+            request.phase=(request.acknowledged and "Checking approval reply; retry " or "No acknowledgment yet; retry ")..request.retries.." / 3"
+        end
+        request.retryAt=now+90
     end
-    if self.RefreshHistoryUI then self:RefreshHistoryUI() end
+    if self.manualRequest and now>self.manualRequest.expires then
+        self:CancelHistory();self:HistoryFeedback("Request expired: no approval arrived within the waiting period. The player may be offline or using an older version. Try again later.","error")
+    end
+    if self.RefreshHistoryUI then
+        local ok,err=pcall(self.RefreshHistoryUI,self)
+        if not ok then self.lastUIError=tostring(err) end
+    end
+end
+function S:ProgressText()
+    local lines={self.status or "Starting"}
+    local r=self.manualRequest
+    if r then table.insert(lines,"Full history: "..r.peer.." - "..(r.phase or "Waiting")) end
+    local p=self.pull
+    if p then
+        local checked=math.max(0,(p.reviewed or 0)-table.getn(p.items or {})-(p.wait and 1 or 0))
+        table.insert(lines,(p.full and "Full history" or "Recent 100").." from "..p.peer..": checked "..checked.." / "..tostring(p.totalRecords or "?")..", downloaded "..(p.downloaded or 0))
+        if p.wait then table.insert(lines,"Current entry: fragments "..(p.received or 0).." / "..tostring(p.total or "?")) end
+    elseif self.lastTransfer then
+        local t=self.lastTransfer;table.insert(lines,"Last completed: "..t.peer.." - checked "..t.reviewed..", downloaded "..t.downloaded)
+    end
+    if self.grant then table.insert(lines,"Sending "..(self.grant.full and "full history" or "recent history").." to "..self.grant.peer..": "..(self.grant.served or 0).." / "..table.getn(self.grant.records).." entries requested") end
+    if self.manualStatus then table.insert(lines,self.manualStatus) end
+    table.insert(lines,"Pending approvals: "..table.getn(self.requests)..(self:InCombat() and " (notification deferred during combat)" or ""))
+    table.insert(lines,"Queue: "..table.getn(self.queue).." packets; next send in "..math.max(0,math.ceil(math.max(self.nextSend or 0,self.pauseUntil or 0)-GetTime())).."s")
+    table.insert(lines,"Imported: "..(self.stats.imported or 0).."; enriched: "..(self.stats.enriched or 0).."; filtered: "..(self.stats.filtered or 0))
+    if self.lastUIError then table.insert(lines,"UI error: "..self.lastUIError) end
+    return table.concat(lines,"\n")
 end
 
 function S:Tick()
@@ -771,10 +942,14 @@ function S:Tick()
         if ok then
             self:Count("sent");table.remove(self.queue,1);self.sendFailures=0
             local target,kind,body=decodeEnvelope(msg)
+            if kind=="R" and self.manualRequest and self.manualRequest.token==body then
+                self.manualRequest.phase="Sent; waiting for delivery acknowledgment";self.manualRequest.retryAt=now+90
+            end
             if kind=="H" and self.discovery and self.discovery.token==body then self.discovery.deadline=now+90 end
             if bulk(kind) and self.grant then self.grant.untilTime=math.max(self.grant.untilTime,now+600) end
         else
             self:Count("sendErrors");self.lastError=string.sub(tostring(err),1,300)
+            if self.manualRequest then self:HistoryFeedback("Delivery delayed: channel send failed. Retrying automatically; you can keep playing.","warning") end
             self.status="Channel send failed";self.nextSend=now+math.max(15,self.sendInterval)
             self.sendFailures=(self.sendFailures or 0)+1
             if self.sendFailures>=3 then table.remove(self.queue,1);self.sendFailures=0 end

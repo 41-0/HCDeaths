@@ -182,6 +182,7 @@ local instances = {
 local HCDeath = CreateFrame("Frame", nil, UIParent)
 HCDeaths_API = HCDeath
 HCDeaths = HCDeaths or {}
+HCDeaths_UnknownDeaths = HCDeaths_UnknownDeaths or {}
 HCDeaths_LastWords = HCDeaths_LastWords or {}
 
 local media = "Interface\\Addons\\HCDeaths\\media\\"
@@ -890,6 +891,7 @@ function ChatFrame_OnEvent(event)
 end
 
 function HCDeath:reset()
+    if self.Sync and self.Sync.ResetApprovalPosition then self.Sync:ResetApprovalPosition() end
 	HCDeaths_Settings.message = true
 	HCDeaths_Settings.log = false
 	HCDeaths_Settings.toast = true
@@ -1018,9 +1020,19 @@ do
     log:position()
     log:SetScript("OnDragStart", function() this:StartMoving() end)
     log:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+    table.insert(UISpecialFrames,"HCDeathsLog")
+    log:SetScript("OnHide",function()
+        GameTooltip:Hide()
+        if HCDeaths_Settings then HCDeaths_Settings.log=false end
+        if HCDeath.RefreshGUI then HCDeath:RefreshGUI() end
+    end)
     log.page=1; log.pageSize=20; log.rows={}
     log.title=log:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
-    log.title:SetPoint("TOP",log,"TOP",0,-14);log.title:SetText("Hardcore Deaths (UTC)")
+    log.title:SetPoint("TOP",log,"TOP",50,-14);log.title:SetText("Hardcore Deaths (UTC)")
+    log.switch=CreateFrame("Button","HCDeathsLogSwitch",log,"UIPanelButtonTemplate")
+    log.switch:SetPoint("TOPLEFT",log,"TOPLEFT",10,-10);log.switch:SetWidth(145);log.switch:SetHeight(24)
+    log.switch:SetText("Unknown death dates")
+    log.switch:SetScript("OnClick",function() log.unknown=not log.unknown;log.page=1;HCDeath:updateLog() end)
     local close=CreateFrame("Button",nil,log,"UIPanelCloseButton")
     close:SetPoint("TOPRIGHT",log,"TOPRIGHT",0,0)
     close:SetScript("OnClick",function()
@@ -1067,7 +1079,7 @@ do
             local r=this.record
             if not r then return end
             GameTooltip:SetOwner(this,"ANCHOR_RIGHT");GameTooltip:ClearLines()
-            GameTooltip:AddLine(r.deathType == "PVP" and "PvP Death" or "PvE Death",1,0.5,0)
+            GameTooltip:AddLine(r.deathTimeUnknown and "Death date and cause type unknown" or (r.deathType == "PVP" and "PvP Death" or "PvE Death"),1,0.5,0)
             GameTooltip:AddLine(HCDeath:Value(r.playerName).." - Level "..HCDeath:Value(r.playerLevel),1,1,1)
             GameTooltip:AddLine("Class: "..HCDeath:Value(r.playerClass).." / Race: "..HCDeath:Value(r.playerRace),1,1,1)
             GameTooltip:AddLine("Guild: "..(r.playerGuild == "" and "None" or HCDeath:Value(r.playerGuild)),1,1,1)
@@ -1080,6 +1092,7 @@ do
             GameTooltip:AddLine("Last words: "..HCDeath:Value(r.lastWords),0.7,0.7,0.7,true)
             if r.shared then
                 GameTooltip:AddLine("Source: shared by "..HCDeath:Value(r.sourcePlayer),0.7,0.7,0.7)
+            elseif r.deathTimeUnknown then GameTooltip:AddLine("Source: gravestone inspection (not shared)",0.7,0.7,0.7)
             else GameTooltip:AddLine("Source: directly received",0.7,0.7,0.7) end
             if r.sharedDetails then
                 GameTooltip:AddLine("Details supplemented by "..HCDeath:Value(r.detailsSource),0.7,0.7,0.7)
@@ -1098,7 +1111,15 @@ do
                 GameTooltip:AddLine("Observed by "..HCDeath:Value(r.graveObserver).." at "..HCDeath:Value(r.graveObservedAt).." UTC",0.7,0.7,0.7,true)
                 GameTooltip:AddLine("Player position when inspecting the grave; approximate death location.",0.7,0.7,0.7,true)
             end
-            GameTooltip:AddLine("Recorded (UTC): "..HCDeath:LogTimestamp(r),0.7,0.7,0.7)
+            if r.reconciledGrave then
+                GameTooltip:AddLine("Matched with an inspected grave",0.6,0.9,1)
+                GameTooltip:AddLine("First / last inspection (UTC): "..HCDeath:Value(r.firstInspectedAt).." / "..HCDeath:Value(r.lastInspectedAt),0.7,0.7,0.7,true)
+            end
+            if r.deathTimeUnknown then
+                GameTooltip:AddLine("Death date/time: Unknown",0.7,0.7,0.7)
+                GameTooltip:AddLine("First inspected (UTC): "..HCDeath:Value(r.firstInspectedAt),0.7,0.7,0.7)
+                GameTooltip:AddLine("Last inspected (UTC): "..HCDeath:Value(r.lastInspectedAt),0.7,0.7,0.7)
+            else GameTooltip:AddLine("Recorded (UTC): "..HCDeath:LogTimestamp(r),0.7,0.7,0.7) end
             GameTooltip:Show()
         end)
         log.rows[i]=row;row:Hide()
@@ -1120,10 +1141,13 @@ function HCDeath:updateLog()
     if not HCDeathsLog:IsShown() then return end
     local log=HCDeathsLog
     -- The original saved table also contains non-death records on some versions.
+    log.title:SetText(log.unknown and "Unknown dates - inspected UTC" or "Hardcore Deaths (UTC)")
+    log.switch:SetText(log.unknown and "Back to death log" or "Unknown death dates")
+    local source=log.unknown and HCDeaths_UnknownDeaths or HCDeaths
     local entries={}
-    for i=table.getn(HCDeaths),1,-1 do
-        local record=HCDeaths[i]
-        if record and (record.deathType=="PVE" or record.deathType=="PVP") then
+    for i=table.getn(source),1,-1 do
+        local record=source[i]
+        if record and (log.unknown or record.deathType=="PVE" or record.deathType=="PVP") then
             table.insert(entries,record)
         end
     end
@@ -1131,7 +1155,9 @@ function HCDeath:updateLog()
         local order={}
         for i,r in ipairs(entries) do order[r]=i end
         table.sort(entries,function(a,b)
-            local x,y=HCDeath.Sync:Stamp(a),HCDeath.Sync:Stamp(b)
+            local x,y
+            if log.unknown then x,y=a.lastInspectedAt or "",b.lastInspectedAt or ""
+            else x,y=HCDeath.Sync:Stamp(a),HCDeath.Sync:Stamp(b) end
             if x and y and x~=y then return x>y end
             if x and not y then return true end
             if y and not x then return false end
@@ -1152,10 +1178,10 @@ function HCDeath:updateLog()
         row.record=record
         if record then
             local c=RAID_CLASS_COLORS[string.upper(HCDeath:Value(record.playerClass))] or {r=.5,g=.5,b=.5}
-            row.timestamp:SetText(HCDeath:LogTimestamp(record))
+            row.timestamp:SetText(log.unknown and (record.lastInspectedAt or "Unknown") or HCDeath:LogTimestamp(record))
             row.text:SetText(HCDeath:Value(record.playerLevel).."  |cff"..HCDeath:rgbToHex(c.r,c.g,c.b)
                 ..HCDeath:Value(record.playerName).."|r  "..HCDeath:DeathLocation(record))
-            row.kind:SetTexture(HCDeath:locTex(record.deathType,record.hcType,HCDeath:DeathLocation(record)))
+            row.kind:SetTexture(record.deathTimeUnknown and "Interface\\Icons\\INV_Misc_QuestionMark" or HCDeath:locTex(record.deathType,record.hcType,HCDeath:DeathLocation(record)))
             row.race:SetTexture(HCDeath:Icon("Log",record.playerRace))
             row.class:SetTexture(HCDeath:Icon("Log",record.playerClass))
             row:Show()
@@ -1193,6 +1219,7 @@ HCDeath:SetScript("OnEvent", function()
         end
         HCDeaths = HCDeaths or {}
         HCDeaths_LastWords = HCDeaths_LastWords or {}
+        if HCDeath.Sync and HCDeath.Sync.ReconcileSavedGraves then HCDeath.Sync:ReconcileSavedGraves() end
         if HCDeath.Retention then HCDeath.Retention:Initialize() end
         if HCDeath.InitializeGUI then HCDeath:InitializeGUI() end
 		HCDeath:Check_pfUI()

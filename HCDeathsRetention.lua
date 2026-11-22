@@ -3,7 +3,13 @@ local addon=HCDeaths_API
 if not addon then return end
 local R={removed=setmetatable({},{__mode="k"})}
 addon.Retention=R
-local function death(r) return r and (r.deathType=="PVE" or r.deathType=="PVP") end
+local function death(r) return r and (r.deathTimeUnknown or r.deathType=="PVE" or r.deathType=="PVP") end
+local function records()
+    local rows={}
+    for _,r in ipairs(HCDeaths or {}) do table.insert(rows,r) end
+    for _,r in ipairs(HCDeaths_UnknownDeaths or {}) do table.insert(rows,r) end
+    return rows
+end
 local function number(value,min,max)
     local n=tonumber(value)
     if n and n==n and n==math.floor(n) and n>=min and n<=max then return n end
@@ -21,13 +27,19 @@ function R:Rules(r)
     HCDeaths_PruneRules[key]=HCDeaths_PruneRules[key] or {levels={}}
     return HCDeaths_PruneRules[key]
 end
-function R:Stamp(r) return addon.Sync and addon.Sync:Stamp(r) end
+function R:Stamp(r)
+    if r and r.deathTimeUnknown and type(r.lastInspectedAt)=="string" then
+        local _,_,day,clock=string.find(r.lastInspectedAt,"^(%d%d%d%d/%d%d/%d%d) (%d%d:%d%d:%d%d)$")
+        return day and addon.Sync and addon.Sync:Stamp({sdate=day,stime=clock})
+    end
+    return addon.Sync and addon.Sync:Stamp(r)
+end
 function R:Now()
     return self:Stamp({sdate=date("!%Y/%m/%d"),stime=date("!%H:%M:%S")})
 end
 function R:Count()
     local count=0
-    for _,r in ipairs(HCDeaths or {}) do if death(r) then count=count+1 end end
+    for _,r in ipairs(records()) do if death(r) then count=count+1 end end
     return count
 end
 function R:AllowImported(r)
@@ -40,21 +52,23 @@ function R:AllowImported(r)
     return not cutoff or stamp>cutoff
 end
 function R:Commit(remove,rememberAge)
-    local count=0;local write=1;local total=table.getn(HCDeaths)
-    for i=1,total do
-        local r=HCDeaths[i]
-        if remove[r] then
-            count=count+1;self.removed[r]=true
-            if rememberAge then
-                local stamp=self:Stamp(r)
-                if stamp then
-                    local rules=self:Rules(r)
-                    rules.before=math.max(rules.before or 0,stamp+1)
+    local count=0
+    for _,list in ipairs({HCDeaths,HCDeaths_UnknownDeaths or {}}) do
+        local write=1;local total=table.getn(list)
+        for i=1,total do
+            local r=list[i]
+            if remove[r] then
+                count=count+1;self.removed[r]=true
+                if rememberAge and not r.deathTimeUnknown then
+                    local stamp=self:Stamp(r)
+                    if stamp then
+                        local rules=self:Rules(r);rules.before=math.max(rules.before or 0,stamp+1)
+                    end
                 end
-            end
-        else HCDeaths[write]=r;write=write+1 end
+            else list[write]=r;write=write+1 end
+        end
+        for i=write,total do list[i]=nil end
     end
-    for i=write,total do HCDeaths[i]=nil end
     if count>0 then
         if addon.OnPrunedRecords then addon:OnPrunedRecords(remove) end
         addon:updateLog()
@@ -64,7 +78,7 @@ function R:Commit(remove,rememberAge)
 end
 function R:Trim(keep)
     local entries={}
-    for index,r in ipairs(HCDeaths) do
+    for index,r in ipairs(records()) do
         if death(r) then table.insert(entries,{record=r,index=index,stamp=self:Stamp(r)}) end
     end
     if table.getn(entries)<=keep then return 0 end
@@ -97,7 +111,7 @@ function R:BelowLevel(value)
     local now=self:Now()
     if not now then return nil,"Cannot determine the current UTC time." end
     local remove={};local scopes={};scopes[self:Scope()]=self:Rules()
-    for _,r in ipairs(HCDeaths) do
+    for _,r in ipairs(records()) do
         if death(r) then
             scopes[self:Scope(r)]=self:Rules(r)
             local n=number(r.playerLevel,1,60)
@@ -118,7 +132,7 @@ function R:OlderThan(value)
     if not now then return nil,"Cannot determine the current UTC time." end
     local cutoff=now-days*86400;local remove={}
     local rules=self:Rules();rules.before=math.max(rules.before or 0,cutoff)
-    for _,r in ipairs(HCDeaths) do
+    for _,r in ipairs(records()) do
         if death(r) then
             local rule=self:Rules(r);rule.before=math.max(rule.before or 0,cutoff)
             local stamp=self:Stamp(r)

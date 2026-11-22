@@ -64,6 +64,7 @@ syncStatus:SetScript("OnEnter",function()
         if s.lastError then GameTooltip:AddLine("Error: "..s.lastError,1,.3,.3,true) end
         GameTooltip:AddLine("/hcd sync check, then /hcd sync status",0.7,0.7,0.7)
     end
+    if addon.Sync and addon.Sync.ProgressText then GameTooltip:AddLine(addon.Sync:ProgressText(),1,1,1,true) end
     GameTooltip:AddLine("Same-faction users in HCDeathsSyncV2. Best effort; no manual setup.",0.7,0.7,0.7,true)
     GameTooltip:Show()
 end)
@@ -149,7 +150,7 @@ local function manageLabel(text,x,y,font)
     f:SetPoint("TOPLEFT",management,"TOPLEFT",x,y);f:SetText(text);return f
 end
 manageLabel("Manage saved death logs",20,-18,"GameFontNormalLarge")
-manageLabel("Deletion changes your saved logs immediately.",20,-46,"GameFontHighlightSmall")
+manageLabel("Changes affect both lists. Unknown dates use last inspection time.",20,-46,"GameFontHighlightSmall")
 local manageClose=CreateFrame("Button",nil,management,"UIPanelCloseButton")
 manageClose:SetPoint("TOPRIGHT",management,"TOPRIGHT",0,0)
 manageClose:SetScript("OnClick",function() management:Hide() end)

@@ -2,6 +2,40 @@
 
 These notes cover changes made by this fork, not releases by GryllsAddons.
 
+## 1.5.4-fork — 2026-11-22
+
+- Consolidate unknown-date grave observations with uniquely matching dated deaths on direct recording, shared import, enrichment, inspection and login.
+- Require all mutually known semantic facts to agree, compare last words exactly, and preserve ambiguous/conflicting observations. Do not match deaths recorded after the first inspection.
+- Preserve valid grave coordinates and first/last inspection times before removing an unknown-date observation; retain the normal death timestamp and source. Reconcile before startup retention limits and never remove observations for filtered imports.
+- Read grave last words from labelled/quoted visible text, including child frames and late text; preserve original message bytes and avoid guessing among ambiguous quotes.
+- Show matched-grave provenance and inspection timestamps in the normal log tooltip.
+- Test exact message capture, per-field conflict rejection, ambiguity on either side, migration, direct/shared/enrichment paths, grave metadata preservation and existing regressions with mocked clients.
+
+## 1.5.3-fork — 2026-11-22
+
+- Close the normal/unknown-date log window with Esc through the standard WoW special-frame mechanism.
+- Keep the saved visibility setting and GUI checkbox in sync when the window closes.
+
+## 1.5.2-fork — 2026-11-22
+
+- Add a prominent persistent request feedback banner for validation failures, exact remaining request cooldown, delivery delays, decline/expiry, cancellation, approval and completion.
+- Explain that delivery/approval can take minutes and that the window can be closed while the user keeps playing.
+- Check chat APIs and queue capacity before accepting a request; failed requests do not consume another cooldown. Report receiver rejection instead of silently ignoring a new request when pending limits are reached.
+- Compact the consent notification, add the HCDeaths title, and default to the bottom-right corner with a small margin.
+- Save dragged consent positions across logins, validate restored anchors/coordinates, and restore the default through Reset settings / positions.
+- Test request error banners, cooldown seconds, background guidance, chat silence, compact panel/title/default anchor, position restoration and reset, alongside existing synchronization and grave-log regressions.
+
+## 1.5.1-fork — 2026-11-22
+
+- Let explicit full-history requests interrupt automatic receiving/discovery, and accept requests even if the capability advertisement was lost.
+- Acknowledge delivery and retry missing request/approval replies within the existing paced transport. Preserve per-transfer consent and combat deferral; handle 0/1 combat API results explicitly.
+- Redraw consent independently from transport, give the notification explicit text dimensions and a visible frame layer, and report UI errors in sync diagnostics.
+- Add a live sync status/progress panel with entry/fragment counters, queue/send delays, request phases and completion feedback.
+- Save directly inspected unrecorded graves in a separate local-only unknown-death-date list. Track first/last inspection UTC without inventing a death time or PvE/PvP cause type.
+- Add a top-left log switch and newest-inspected sorting with pagination; reuse matching observations on repeat visits.
+- Apply retention and manual cleanup across both lists, using inspection time for undated graves.
+- Test missing request/approval recovery, capability-loss and discovery paths, numeric combat states, live notification, unknown-date creation/revisit/sorting/pagination/retention and existing regressions with mocked clients. In-game verification remains necessary.
+
 ## 1.5.0-fork — 2026-11-21
 
 - Limit automatic grants to the newest 100 shareable entries, independent of local retention settings; bound automatic intake from legacy senders too.

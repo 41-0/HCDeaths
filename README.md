@@ -119,6 +119,28 @@ These cleanup actions do not establish a minimum level for future death recordin
 
 Synchronization uses stable per-session inventory references so that deletions cannot change an advertised index to point at a different death. Deleted requests are skipped by updated peers. When a cap is enabled, the synchronization fingerprint cache is also bounded. The transport remains compatible with protocol V2 peers; older peers may time out and retry if an entry is deleted during a transfer.
 
+## Graves with an unknown death date (1.5.1)
+
+When you inspect a gravestone with no uniquely matching recorded death, HCDeaths saves a separate entry in **Unknown death dates**. Use the button in the **top-left of the log window** to switch between this list and the normal death log. Each list is paged; switching starts at page one.
+
+The entry stores the visible name, level, race/class and killer information, plus the **first and last inspection timestamps in UTC**. Entries are sorted by **last inspection, newest first**; inspecting the same matching grave updates that time instead of creating another entry. The death date/time and PvE/PvP type stay unknown. Inspection time is never substituted for death time. Matching multiple recorded deaths remains ambiguous and does not create an extra speculative entry.
+
+Available observer coordinates and zone/subzone are recorded as before. If coordinates are unavailable, the unknown-date entry is still saved. No death toast, sound or `/who` lookup is triggered. These observations are **local only** and excluded from death-log synchronization. Starting with 1.5.4, a matching dated death can consolidate an observation under the conservative rules below.
+
+### Matching an unknown-date grave to a dated death (1.5.4)
+
+On a local death notice, shared death import, later enrichment or login, HCDeaths checks the unknown-date list. Names, victim/killer levels and names, realm and faction must be available on both sides. Every other comparable fact available on both sides must agree: class/race/guild, killer details, precise location, challenge type and last words. Unknown fields do not invent a contradiction. Names and categorical text compare without letter-case differences; **last words compare exactly**, including case and spacing.
+
+Consolidation requires a **unique candidate in both lists**. Conflicting facts or multiple matching deaths/observations leave the unknown-date entry untouched. A dated death recorded after the first grave inspection is also excluded; clock differences may conservatively prevent a match. Observer coordinates and inspection time are visit metadata, not an exact death position/time. The broad `/who` zone is not equated with the precise death-location field.
+
+When a match is accepted, the existing dated record keeps its death date/time and source information. Missing facts and a valid grave coordinate bundle are filled, first/last inspection timestamps are retained, and only then is the unknown-date observation removed. Existing valid coordinates are not mixed with coordinates from a different visit. The normal log tooltip identifies the matched grave. This also works for existing saved records before storage limits run on login, even with sharing disabled. Filtered shared records cannot remove an observation without being saved.
+
+### Last words shown on graves
+
+Grave inspection also captures visible last words from labelled text or a single standalone quote, including text in child frames. Mixed case, repeated spaces, nested quotes and non-ASCII text are retained. The words are saved on an unknown-date observation or fill a dated record that lacks them. Different known last words prevent matching; ambiguous multiple quotes are not guessed. Text that appears shortly after the grave window opens is checked again. Actual server UI layouts still need in-game confirmation.
+
+The optional maximum and cleanup controls cover **both lists together**. Age/count ordering uses last inspection for unknown-date entries, and death-record time for normal entries. Default storage remains unlimited. The separate saved-variable table is `HCDeaths_UnknownDeaths`.
+
 ## Automatic log sharing (1.5.0)
 
 Sharing is enabled by default. No player-name entry, grouping, or manual sync command is needed. The addon joins the custom channel **HCDeathsSyncV2**, discovers another compatible user after a randomized startup delay, and periodically reconciles the latest **100 shareable PvE/PvP deaths per peer**, selected by recorded UTC timestamp. This does not limit local storage. Updated senders enforce this boundary on the records they offer. This transport targets **the same realm and faction**. Opposite-faction sharing is not implemented. Use version 1.5.0 on both clients for the latest sharing and approval behavior, and a server that permits custom-channel traffic. Earlier synchronization was confirmed on Octo; the new 1.5.0 controls still need in-game verification.
@@ -132,11 +154,21 @@ Sharing is enabled by default. No player-name entry, grouping, or manual sync co
 - Existing untagged logs are adopted into the realm/faction of the first sync-enabled login. If an old account-wide log already mixed several realms or factions, those original origins cannot be recovered automatically. New records carry explicit realm/faction tags. Records with invalid/missing timestamps or fields exceeding transport limits remain available locally but are not shared.
 - Normal chat windows hide this channel's protocol traffic and channel notices. Settings has **Automatically share death logs** and a **Sync status (hover)** indicator. Uncheck it (or use `/hcd sync`) to stop sending/receiving and leave the channel. Reset restores sharing to on. Recording local server notices works independently of sharing.
 
+### Synchronization progress
+
+Settings → **Sync status / full history...** opens a live status panel with a progress bar. It shows the peer, recent-100/full-history mode, entries checked against the available total, entries downloaded, current entry fragments, outgoing requests, queued packets, next send delay, imported/enriched/filtered totals, and the last completed pass. A completed pass may download zero entries when everything is already known.
+
+The request controls have a dedicated feedback banner: **red** for a request that was not sent or failed, **amber** for a delay/cancellation, **blue** when queued, and **green** when approved/completed. The banner remains visible until a later action/state replaces it. Cooldown rejection gives the remaining seconds. Invalid/self names, disabled sharing, an active full-history request, unavailable chat APIs and a full outgoing queue produce explicit feedback without consuming another request cooldown. Decline/expiry and transfer timeout are also shown. GUI feedback stays out of chat.
+
+After accepting a request locally, the banner says: “Delivery and approval may take several minutes. You can close this window and keep playing; the request continues in the background.” This means queued, not yet approved or received. Slow sending remains intentional to avoid server chat throttling.
+
+Explicit requests distinguish **queued**, **sent**, **delivered / waiting for approval**, declined/expired and completed states. Updated receivers acknowledge consent requests; missing request or approval replies are retried up to three times without bypassing chat pacing. Version 1.5.0 peers do not provide the new delivery acknowledgment. Update both clients to **1.5.1** for the corrected interface and complete status feedback. `/hcd sync status` also reports pending approvals, request state and any consent UI error.
+
 ### Requesting full history
 
-Open settings → **Full history sharing...**, enter the sender's character name (the last detected peer is filled in), and click **Request all** after discovery has finished. Both users must run **1.5.0 or later**, have sharing enabled, and remain online on the same realm/faction.
+Open settings → **Sync status / full history...**, enter the sender's character name (the last detected peer is filled in), and click **Request all**. An explicit request takes priority over an automatic receiving/discovery session; it no longer waits for a cached capability advertisement. Both users must run **1.5.0 or later**, have sharing enabled, and remain online on the same realm/faction.
 
-The sender gets a small, draggable **top-right** notification with **Allow once** and **Decline**. It never steals keyboard focus or plays a sound. The notification stays hidden during combat and appears afterward if the request has not expired; accepting during combat is also blocked. Requests are combined in one panel, at most five are pending, and requests are limited to once per five minutes per peer. Ignored requests expire after **10 minutes**, including time spent in combat. Approval applies only to that requester and that transfer, never permanently. An active outgoing transfer must finish before another request can be approved.
+The sender gets a compact, draggable **bottom-right** notification headed **HCDeaths** with **Allow once** and **Decline**. The default position is inset 24 UI units from the bottom and right edges. Dragging saves its position for subsequent requests and logins; Reset settings / positions restores the default. It never steals keyboard focus or plays a sound. The combat check accepts boolean or numeric client API results (0 means out of combat). A dedicated UI redraw also keeps consent visible while transport is paused or logs are being indexed. The notification stays hidden during combat and appears afterward if the request has not expired; accepting during combat is also blocked. Requests are combined in one panel, at most five are pending, and requests are limited to once per five minutes per peer. Ignored requests expire after **10 minutes**, including time spent in combat. Approval applies only to that requester and that transfer, never permanently. An active outgoing full-history transfer must finish before another can be approved; approving full history replaces an automatic outgoing transfer.
 
 Either user can open the same dialog and click **Cancel transfer**. Full history has no entry-count limit, but still observes packet pacing, server cooldowns, validation, local storage caps and deletion rules. Only missing record versions are downloaded; existing known facts remain protected. Large histories can take hours. There is no automatic full-history upload and no promise of completion after either player leaves. The addon records only a session-local digest; relogging can require another inventory comparison.
 
@@ -245,3 +277,5 @@ Copyright (c) 2023 GryllsAddons
 ```
 
 The fork's changes are also distributed under the MIT License. Keep the original copyright and complete license text when redistributing this addon. The original software is provided without warranty, as stated in LICENSE.
+
+The death-log window closes with **Esc** in both the normal and unknown-death-date views. Closing also updates the saved visibility setting and the settings checkbox.
